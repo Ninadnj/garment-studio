@@ -1,6 +1,8 @@
 # Garment Studio
 
-Web app (installable on iPhone and Mac) for clothing photos:
+Live at **https://ninadnj.github.io/garment-studio/** (see [Install on a device](#install-on-a-device)).
+
+Web app (installable on phones and Macs) for clothing photos:
 
 1. **Clean photos.** Add one or many garment photos at once. Each background is removed on the device and replaced with a colour you pick (or a transparent PNG).
    - Edge cleanup: soft edges are recoloured with the garment's own colour, so the old background doesn't show as a light or dark rim. Specks and haze away from the garment are removed.
@@ -63,7 +65,7 @@ Products, the photos in them and their try-on results can be shared with a small
 4. **Authentication → Users → Add user → Create new user**, for each team member: email and password, with *Auto Confirm User* ticked. No email is sent.
 5. **Project Settings → API Keys**: copy the project URL and the *publishable* (anon) key. Never put the secret (service_role) key in the app.
 6. In the app: **Settings → Team** → paste both → Connect → sign in.
-7. **Settings → Team → Copy link for your team**, and send it to the others: opening it connects their app to the project (after asking), and they sign in with their own account. The app only accepts links to an `https://….supabase.co` project, and switching to another project signs out first.
+7. **Settings → Team → Copy link for your team**, and send it to the others. Each of them opens the app, pastes the link into **Settings → Team → Project URL** → Connect, and signs in with their own account. (Opening the link also connects, but only in the browser it opens in; see [Install on a device](#install-on-a-device).) The app only accepts links to an `https://….supabase.co` project, and opening a link to another project signs out first.
 
 **How it works:** every change on a device is queued and uploaded a few seconds later; each device also fetches the team's changes every 30 seconds while the app is open, when it comes back online, and with *Sync now*. Of two versions of a record, the one changed later wins: the database refuses an older upload, and the device then takes the team's version. Automatic cutouts and thumbnails are made by each device and are not edits. Deleting a product, or taking a photo out of its product, removes it from the team; the photo stays on the device it was taken out on. Photos are stored under names made from their content, so an unchanged photo is never uploaded twice. Sync never deletes photos from storage (another device's version may still use one), so replaced and deleted photos keep counting toward the 1 GB. A change whose photo fails to download is tried again on the next sync; the rest is applied meanwhile.
 
@@ -87,12 +89,15 @@ npm test
 
 `.github/workflows/deploy.yml` builds and publishes `dist/` to GitHub Pages on every push to `main` (Settings → Pages → Source: GitHub Actions). The build uses relative paths, so it works under any sub-path.
 
-Browser storage belongs to the origin, not the path: as a project site under `ninadnj.github.io`, the app would share its keys (Settings), its team sign-in (Supabase session) and photos (IndexedDB) with every other Pages site on that account. A custom subdomain (a CNAME on its Pages site) or another host keeps them apart.
+Browser storage belongs to the origin, not the path: as a project site under `ninadnj.github.io`, the app shares its keys (Settings), its team sign-in (Supabase session) and photos (IndexedDB) with every other Pages site on that account, so those sites should load no scripts from elsewhere. A custom subdomain (a CNAME on its Pages site) or another host keeps them apart.
 
 ## Install on a device
 
 - **iPhone:** open the site in Safari → Share → Add to Home Screen.
+- **Android:** open the site in Chrome → ⋮ → Add to Home screen (or Install app).
 - **Mac:** Safari → File → Add to Dock, or the install icon in Chrome's address bar.
+
+An app added to the iPhone Home Screen, or to the Dock from Safari, keeps its own storage apart from Safari: it starts empty, and a setup link opened in Safari doesn't reach it, so paste the link into its **Settings → Team** instead. An app installed from Chrome shares Chrome's storage. Links opened inside Instagram, Facebook or WhatsApp open in their own browser, with its own storage too.
 
 ## Licences
 

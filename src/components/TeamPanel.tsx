@@ -7,6 +7,7 @@ import {
   loadConfig,
   loadSession,
   normalizeUrl,
+  readSetupLink,
   saveConfig,
   saveSession,
   setupLink,
@@ -59,6 +60,20 @@ export function TeamPanel() {
     }
   }
 
+  // An app added to the iPhone Home Screen (or to the Dock from Safari) keeps its own storage, apart from
+  // Safari, and links open in Safari: there the setup link is pasted here instead of opened.
+  function typeUrl(text: string) {
+    const linked = readSetupLink(text)
+    if (linked) {
+      setUrl(linked.url)
+      setKey(linked.key)
+      setError(undefined)
+    } else {
+      setUrl(text)
+      setError(text.includes('#team=') ? 'This setup link is incomplete. Copy the whole link again.' : undefined)
+    }
+  }
+
   const connect = () =>
     attempt(async () => {
       const c = { url: normalizeUrl(url), key: key.trim() }
@@ -104,7 +119,7 @@ export function TeamPanel() {
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(setupLink(config!, `${location.origin}${location.pathname}`))
-      toast({ text: 'Link copied. Teammates open it, then sign in with their own account.' })
+      toast({ text: 'Link copied. Teammates open it or paste it into Settings → Team, then sign in with their own account.' })
     } catch {
       toast({ text: 'Copying is not allowed here.', error: true })
     }
@@ -116,7 +131,7 @@ export function TeamPanel() {
         <h2>Team</h2>
         <p className="muted small">
           Share products, their photos and their try-on results with your team through a free Supabase project. The
-          README has the setup steps. Or open the setup link a teammate sent you.
+          README has the setup steps. If a teammate sent you a setup link, paste it into Project URL.
         </p>
         <form
           onSubmit={(e) => {
@@ -128,10 +143,10 @@ export function TeamPanel() {
             <input
               className="input"
               aria-label="Project URL"
-              placeholder="https://….supabase.co"
+              placeholder="https://….supabase.co or a setup link"
               autoComplete="off"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => typeUrl(e.target.value)}
             />
           </Field>
           <Field label="Publishable key" hint="Project Settings → API Keys → publishable (anon) key. Never the secret key.">

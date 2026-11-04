@@ -117,6 +117,12 @@ describe('team (Supabase)', () => {
     expect(normalizeUrl(' abc.supabase.co/ ')).toBe('https://abc.supabase.co')
   })
 
+  it('reads a setup link pasted with other text around it, and refuses one cut short', () => {
+    const link = setupLink(config, 'https://ninadnj.github.io/garment-studio/')
+    expect(readSetupLink(`Our team link: ${link} (sign in with your email)`)).toEqual(config)
+    expect(readSetupLink(link.slice(0, -10))).toBeUndefined()
+  })
+
   it('keeps the session when the project is paused or busy, and says what happened', async () => {
     let session: Session | undefined = { url: config.url, access: 'old', refresh: 'r-old', expiresAt: 0, email: 'n' }
     fakeSupabase(() => new Response(null, { status: 540 }))
