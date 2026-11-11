@@ -52,7 +52,20 @@ export async function downscale(blob: Blob, maxSide: number, type = 'image/jpeg'
   }
   ctx.drawImage(bmp, 0, 0, c.width, c.height)
   bmp.close()
-  return canvasToBlob(c, type, 0.92)
+  try {
+    return await canvasToBlob(c, type, 0.92)
+  } finally {
+    releaseCanvas(c)
+  }
+}
+
+/**
+ * Gives a canvas's memory back at once. iPhones cap the memory all canvases may use; a dropped canvas only
+ * counts down when it is collected, and past the cap getContext returns null.
+ */
+export function releaseCanvas(c: HTMLCanvasElement) {
+  c.width = 0
+  c.height = 0
 }
 
 export function blobToDataURL(blob: Blob) {
@@ -66,7 +79,8 @@ export function blobToDataURL(blob: Blob) {
 
 export const dataURLToBlob = (url: string) => fetch(url).then((r) => r.blob())
 
-const isTouch = () => matchMedia('(pointer: coarse)').matches
+/** A phone or tablet: files go to the share sheet rather than a download. */
+export const isTouch = () => matchMedia('(pointer: coarse)').matches
 
 const canShare = (files: File[]) => {
   try {
@@ -95,14 +109,24 @@ export const toFile = (blob: Blob, baseName: string) =>
 /** 'needs-tap': the share sheet refused because preparing took too long after the tap; ask for another tap. */
 export type SaveResult = 'shared' | 'downloaded' | 'cancelled' | 'needs-tap'
 
+export interface ShareOptions {
+  zipName: string // when several files are downloaded
+  text?: string // sent along with the files; some apps keep it (WhatsApp), others drop it (Instagram)
+  copy?: string // put on the clipboard first, for the apps that drop shared text
+  preferShare?: boolean
+}
+
 /**
- * Phones: the share sheet ("Save Image" puts the files in Photos). Desktop: a download, zipped when
- * there are several files.
+ * Phones: the share sheet ("Save Images" puts the files in Photos). Desktop: a download, zipped when there are
+ * several files. Call it straight from the tap, with the files ready: iPhones refuse a share sheet that opens
+ * long after the tap ('needs-tap').
  */
-export async function saveFiles(files: File[], zipName: string, preferShare = isTouch()): Promise<SaveResult> {
-  if (preferShare && canShare(files)) {
+export async function shareFiles(files: File[], o: ShareOptions): Promise<SaveResult> {
+  // Not awaited: the clipboard write and the share must both happen within the tap.
+  if (o.copy) navigator.clipboard?.writeText(o.copy).catch(() => {})
+  if ((o.preferShare ?? isTouch()) && canShare(files)) {
     try {
-      await navigator.share({ files })
+      await navigator.share(o.text ? { files, text: o.text } : { files })
       return 'shared'
     } catch (e) {
       const name = (e as DOMException).name
@@ -113,10 +137,12 @@ export async function saveFiles(files: File[], zipName: string, preferShare = is
   if (files.length === 1) download(files[0], files[0].name)
   else {
     const { zip } = await import('./zip')
-    download(await zip(files.map((f) => ({ name: f.name, data: f }))), zipName)
+    download(await zip(files.map((f) => ({ name: f.name, data: f }))), o.zipName)
   }
   return 'downloaded'
 }
+
+export const saveFiles = (files: File[], zipName: string, preferShare = isTouch()) => shareFiles(files, { zipName, preferShare })
 
 export const saveImage = (blob: Blob, baseName: string) => saveFiles([toFile(blob, baseName)], `${baseName}.zip`)
 

@@ -4,8 +4,10 @@ import {
   TeamError,
   checkConfig,
   createRemote,
+  isSecretKey,
   normalizeUrl,
   readSetupLink,
+  separateStorageNote,
   setupLink,
   signIn,
   signOut,
@@ -121,6 +123,40 @@ describe('team (Supabase)', () => {
     const link = setupLink(config, 'https://ninadnj.github.io/garment-studio/')
     expect(readSetupLink(`Our team link: ${link} (sign in with your email)`)).toEqual(config)
     expect(readSetupLink(link.slice(0, -10))).toBeUndefined()
+  })
+
+  it('reads a setup link pasted twice, after a cut-off copy, or with the # encoded', () => {
+    const link = setupLink(config, 'https://ninadnj.github.io/garment-studio/')
+    expect(readSetupLink(link + link)).toEqual(config)
+    expect(readSetupLink(link.slice(0, -10) + link)).toEqual(config)
+    expect(readSetupLink(link.replace('#team=', '%23team%3D'))).toEqual(config)
+  })
+
+  it('refuses secret keys, in a setup link and when connecting', async () => {
+    const jwt = (role: string) => `x.${btoa(JSON.stringify({ role })).replace(/=+$/, '')}.y`
+    expect(isSecretKey('sb_secret_abc')).toBe(true)
+    expect(isSecretKey(jwt('service_role'))).toBe(true)
+    expect(isSecretKey(jwt('anon'))).toBe(false)
+    expect(isSecretKey(config.key)).toBe(false)
+    expect(readSetupLink(setupLink({ ...config, key: jwt('service_role') }, 'https://x.example/'))).toBeUndefined()
+    const seen = fakeSupabase(() => json({}))
+    await expect(checkConfig({ ...config, key: 'sb_secret_abc' })).rejects.toThrow(/secret key/)
+    expect(seen).toHaveLength(0)
+  })
+
+  it('tidies a project address typed with capitals or extra parts', () => {
+    expect(normalizeUrl('Https://ABC.supabase.co/')).toBe('https://abc.supabase.co')
+    expect(normalizeUrl('https://abc.supabase.co/?x=1#y')).toBe('https://abc.supabase.co')
+    expect(normalizeUrl('http://abc.supabase.co')).toBe('http://abc.supabase.co') // still refused later
+  })
+
+  it('says when opening a link connects only this browser', () => {
+    const iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1'
+    expect(separateStorageNote({ userAgent: iphone, standalone: false })).toMatch(/Home Screen/)
+    expect(separateStorageNote({ userAgent: iphone, standalone: true })).toBeUndefined()
+    expect(separateStorageNote({ userAgent: `${iphone} Instagram 300.0.0` })).toMatch(/built-in browser/)
+    expect(separateStorageNote({ userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7; wv) Chrome/130.0' })).toMatch(/built-in browser/)
+    expect(separateStorageNote({ userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7) Chrome/130.0 Mobile' })).toBeUndefined()
   })
 
   it('keeps the session when the project is paused or busy, and says what happened', async () => {

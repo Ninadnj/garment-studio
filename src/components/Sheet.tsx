@@ -1,9 +1,30 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { IconClose } from './Icons'
 
-/** Bottom sheet on phones, centred dialog on wider screens. */
-export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+/**
+ * Bottom sheet on phones, centred dialog on wider screens. `confirmClose` is asked before closing (return false
+ * to stay open), e.g. while closing would throw away unsaved work.
+ */
+export function Sheet({
+  title,
+  onClose,
+  confirmClose,
+  children,
+}: {
+  title: string
+  onClose: () => void
+  confirmClose?: () => boolean
+  children: ReactNode
+}) {
   const box = useRef<HTMLDivElement>(null)
+  const close = () => {
+    if (!confirmClose || confirmClose()) onClose()
+  }
+  const closeRef = useRef(close)
+  closeRef.current = close
+  // A click on the backdrop closes only when it also started there: selecting text in a field and letting go
+  // outside the sheet is not a click on the backdrop.
+  const downOnBackdrop = useRef(false)
   // What had focus before the sheet opened (read while rendering, before a field inside takes focus).
   const [opener] = useState(() => document.activeElement as HTMLElement | null)
 
@@ -34,7 +55,7 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   }
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current()
     window.addEventListener('keydown', onKey)
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -42,10 +63,17 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
       window.removeEventListener('keydown', onKey)
       document.body.style.overflow = prev
     }
-  }, [onClose])
+  }, [])
 
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
+    <div
+      className="sheet-backdrop"
+      onPointerDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && downOnBackdrop.current) close()
+        downOnBackdrop.current = false
+      }}
+    >
       <div
         ref={box}
         className="sheet"
@@ -58,7 +86,7 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
       >
         <div className="sheet-head">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={close} aria-label="Close">
             <IconClose />
           </button>
         </div>

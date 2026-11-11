@@ -29,7 +29,7 @@ export interface Local {
   put(store: SyncedStore, rec: Rec): Promise<void>
   remove(store: SyncedStore, id: string): Promise<void>
   all(store: SyncedStore): Promise<Rec[]>
-  thumb(photo: Blob): Promise<Blob | undefined>
+  thumb(shown: Blob, cutout: boolean): Promise<Blob | undefined>
   changed(stores: Set<SyncedStore>): void
 }
 
@@ -155,6 +155,12 @@ export function createSync({
       const photo = await fetchOr(d.photo, prev?.photo)
       const cut = d.cut ? await fetchOr(d.cut, prev?.editedCut) : undefined
       const same = prev && photo === prev.photo
+      // This device's own cutout stays only for the same photo cut out the same way; otherwise it is made
+      // again here, with the method the team chose.
+      const autoCut = same && prev.remover === d.remover ? prev.autoCut : undefined
+      // What this device shows for the record (shownCut in garments.ts), the photo until a cutout exists.
+      const shown = (d.removeBg ? (cut ?? autoCut) : photo) ?? photo
+      const prevShown = prev && ((prev.removeBg ? (prev.editedCut ?? prev.autoCut) : prev.photo) ?? prev.photo)
       const rec: GarmentRec = {
         ...prev,
         id: row.id,
@@ -167,8 +173,9 @@ export function createSync({
         productId: d.productId,
         photo,
         editedCut: cut,
-        autoCut: same ? prev.autoCut : undefined, // made again on this device
-        thumb: same ? prev.thumb : await local.thumb(photo),
+        autoCut,
+        // A hand fix or an online cutout from the team changes the picture without changing the photo.
+        thumb: prev && shown === prevShown ? prev.thumb : await local.thumb(shown, shown !== photo),
       }
       return { rec, paths: [d.photo, d.cut].filter(Boolean) }
     }
@@ -319,6 +326,8 @@ export function createSync({
     queue,
     queueAll,
     run,
+    /** Resolves when no sync is running in this window (e.g. before clearing its state). */
+    idle: (): Promise<void> => running ?? Promise.resolve(),
     status: () => ({ ...status, pending: pending() }),
     setStatus,
     onStatus(f: (s: SyncStatus) => void) {

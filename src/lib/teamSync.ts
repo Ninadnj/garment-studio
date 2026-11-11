@@ -54,7 +54,7 @@ export const teamSync = createSync({
     put: (store, rec) => putRec(store, rec as never, true),
     remove: (store, id) => deleteRec(store, id, true),
     all: (store) => listAll(store),
-    thumb: (photo) => thumbnail(photo, false).catch(() => undefined),
+    thumb: (shown, cutout) => thumbnail(shown, cutout).catch(() => undefined),
     changed: (stores) => stores.forEach(storeChanged),
   },
   state,

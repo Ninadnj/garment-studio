@@ -10,6 +10,8 @@ export type Currency = 'GEL' | 'USD' | 'EUR' | 'GBP'
 export interface Settings {
   currency: Currency // for product prices
   shopInfo: string // added to copied product details: how to order, delivery…
+  shopName: string // on catalogue pages
+  contactLine: string // at the bottom of catalogue pages, e.g. "@shop · 555 12 34 56"
   ai: AIService
   hfToken: string // optional, raises the free daily allowance on Hugging Face
   fashnKey: string
@@ -19,9 +21,9 @@ export interface Settings {
 }
 
 export const REMOVER_LABELS: Record<Remover, string> = {
-  rmbg14: 'BRIA',
-  isnet_fp16: 'IMG.LY',
-  isnet_quint8: 'IMG.LY light',
+  rmbg14: 'Standard',
+  isnet_fp16: 'Second method',
+  isnet_quint8: 'Light',
 }
 
 export const SHADOW_LABELS: Record<ShadowStyle, string> = {
@@ -46,6 +48,8 @@ const LOOK_KEY = 'gs.look'
 export const DEFAULT_SETTINGS: Settings = {
   currency: 'GEL',
   shopInfo: '',
+  shopName: '',
+  contactLine: '',
   ai: 'free',
   hfToken: '',
   fashnKey: '',
@@ -86,6 +90,7 @@ function write(key: string, value: unknown) {
 export function parseSettings(stored: Record<string, unknown>): Settings {
   const s = { ...DEFAULT_SETTINGS, ...stored } as Settings
   if (!('ai' in stored) && s.fashnKey) s.ai = 'fashn'
+  if (!(s.remover in REMOVER_LABELS)) s.remover = DEFAULT_SETTINGS.remover // a remover this version doesn't have
   return s
 }
 

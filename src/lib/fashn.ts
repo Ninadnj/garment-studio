@@ -8,7 +8,14 @@ const TIMEOUT_MS = 5 * 60_000
 
 export type RunStatus = 'starting' | 'in_queue' | 'processing' | 'completed' | 'failed'
 
-export class FashnError extends Error {}
+export class FashnError extends Error {
+  constructor(
+    message: string,
+    readonly status = 0, // HTTP status; 0 when FASHN couldn't be reached
+  ) {
+    super(message)
+  }
+}
 
 interface Quality {
   mode: GenMode
@@ -27,8 +34,8 @@ async function call<T>(key: string, path: string, init?: RequestInit): Promise<T
   }
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    if (res.status === 401) throw new FashnError('FASHN rejected the API key. Check it in Settings.')
-    throw new FashnError(body.message || body.error || `FASHN error ${res.status}`)
+    if (res.status === 401) throw new FashnError('FASHN rejected the API key. Check it in Settings.', 401)
+    throw new FashnError(body.message || body.error || `FASHN error ${res.status}`, res.status)
   }
   return body as T
 }
@@ -38,6 +45,7 @@ async function run(
   model_name: string,
   inputs: Record<string, unknown>,
   onStatus?: (s: RunStatus) => void,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const sub = await call<{ id?: string; error?: unknown }>(key, '/run', {
     method: 'POST',
@@ -47,7 +55,16 @@ async function run(
   const started = Date.now()
   for (;;) {
     await new Promise((r) => setTimeout(r, POLL_MS))
-    const s = await call<{ status: RunStatus; output?: string[]; error?: unknown }>(key, `/status/${sub.id}`)
+    signal?.throwIfAborted()
+    let s: { status: RunStatus; output?: string[]; error?: unknown }
+    try {
+      s = await call(key, `/status/${sub.id}`)
+    } catch (e) {
+      // A dropped connection or a busy server while waiting: the paid job keeps running at FASHN, so keep asking.
+      const passing = e instanceof FashnError && (e.status === 0 || e.status === 429 || e.status >= 500)
+      if (!passing || Date.now() - started > TIMEOUT_MS) throw e
+      continue
+    }
     onStatus?.(s.status)
     if (s.status === 'completed') {
       if (!s.output?.length) throw new FashnError('FASHN returned no image.')
@@ -79,6 +96,7 @@ export const createModel = (
   q: Quality,
   count: number,
   onStatus?: (s: RunStatus) => void,
+  signal?: AbortSignal,
 ) =>
   run(
     key,
@@ -93,6 +111,7 @@ export const createModel = (
       seed: Math.floor(Math.random() * 2 ** 31),
     },
     onStatus,
+    signal,
   )
 
 /** Put the product on the person in `modelImage`, keeping their pose and the photo framing. */

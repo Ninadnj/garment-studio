@@ -93,6 +93,12 @@ function SomeOf({
 }) {
   const [text, setText] = useState('')
   const extra = value.filter((v) => !options.includes(v))
+  // Also on leaving the field, so text typed and then closed with Done isn't lost.
+  const add = () => {
+    const t = asOffered(text.trim(), options)
+    if (t && !value.some((x) => x.toLowerCase() === t.toLowerCase())) onChange([...value, t])
+    setText('')
+  }
   return (
     <>
       <div className="chips" role="group" aria-label={label}>
@@ -111,12 +117,17 @@ function SomeOf({
         className="row"
         onSubmit={(e) => {
           e.preventDefault()
-          const t = asOffered(text.trim(), options)
-          if (t && !value.some((x) => x.toLowerCase() === t.toLowerCase())) onChange([...value, t])
-          setText('')
+          add()
         }}
       >
-        <input className="input grow" placeholder={other} aria-label={other} value={text} onChange={(e) => setText(e.target.value)} />
+        <input
+          className="input grow"
+          placeholder={other}
+          aria-label={other}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => text.trim() && add()}
+        />
         <button className="btn-secondary" disabled={!text.trim()} aria-label={`Add: ${other.toLowerCase()}`}>
           Add
         </button>
@@ -185,6 +196,7 @@ export function ProductSheet({
   onOpen,
   onClose,
   onDeleted,
+  onPostKit,
 }: {
   product: ProductRec
   P: Products
@@ -196,6 +208,7 @@ export function ProductSheet({
   onOpen: (productId: string) => void
   onClose: () => void
   onDeleted: (rec: ProductRec) => void
+  onPostKit: () => void
 }) {
   const toast = useToast()
   const fileInput = useRef<HTMLInputElement>(null)
@@ -241,7 +254,7 @@ export function ProductSheet({
 
   /** The same design in another colour: everything but the photos, colours, stock and sale history. */
   function copyAsNewColour() {
-    const { id: _id, createdAt: _c, updatedAt: _u, code: _code, coverId: _cover, soldAt: _sold, ...rest } = p
+    const { id: _id, createdAt: _c, updatedAt: _u, code: _code, coverId: _cover, soldAt: _sold, postedAt: _at, ...rest } = p
     const rec = P.create({
       ...rest,
       colours: [],
@@ -304,6 +317,9 @@ export function ProductSheet({
           }}
         />
       </Field>
+      <button className="btn-secondary kit-open" onClick={onPostKit} disabled={!photos.length && !results.length}>
+        Post kit: images and caption for Instagram and Facebook
+      </button>
 
       <Field label="Name">
         <input
@@ -366,7 +382,7 @@ export function ProductSheet({
           options={SIZE_SYSTEM_IDS}
           labels={Object.fromEntries(SIZE_SYSTEM_IDS.map((id) => [id, SIZE_SYSTEMS[id].label]))}
           value={system}
-          onChange={(sizeSystem) => set({ sizeSystem: sizeSystem ?? 'letter' })}
+          onChange={(sizeSystem) => sizeSystem && set({ sizeSystem })} // one is always chosen
         />
         {p.sizes.length > 0 && (
           <div className="stock-list">
@@ -389,7 +405,7 @@ export function ProductSheet({
                 <button
                   className="btn-text"
                   aria-label={`Remove ${s.size}`}
-                  onClick={() => set(stockPatch(p, p.sizes.filter((x) => x.size !== s.size)))}
+                  onClick={() => set({ sizes: p.sizes.filter((x) => x.size !== s.size) })} // removing a size is not a sale
                 >
                   Remove
                 </button>
@@ -418,6 +434,11 @@ export function ProductSheet({
             aria-label="Another size"
             value={otherSize}
             onChange={(e) => setOtherSize(e.target.value)}
+            onBlur={() => {
+              if (!otherSize.trim()) return
+              addSize(otherSize)
+              setOtherSize('')
+            }}
           />
           <button className="btn-secondary" disabled={!otherSize.trim()} aria-label="Add size">
             Add
@@ -474,6 +495,16 @@ export function ProductSheet({
           value={p.measurements}
           placeholder="e.g. Chest 52 cm, length 70 cm"
           onChange={(e) => set({ measurements: e.target.value })}
+        />
+      </Field>
+
+      <Field label="Words for posts" hint="Your own text, under the name in post captions and copied details.">
+        <textarea
+          className="input"
+          aria-label="Words for posts"
+          rows={2}
+          value={p.postText ?? ''}
+          onChange={(e) => set({ postText: e.target.value })}
         />
       </Field>
 

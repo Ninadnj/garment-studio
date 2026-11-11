@@ -63,10 +63,41 @@ export const loadSession = () => {
 }
 export const saveSession = (s?: Session) => write(SESSION_KEY, s)
 
-/** "https://abc.supabase.co/" or "abc.supabase.co" → "https://abc.supabase.co". */
+/** "https://abc.supabase.co/", "Https://ABC.supabase.co" (a phone capitalised it) or "abc.supabase.co" → "https://abc.supabase.co". */
 export function normalizeUrl(url: string) {
   const u = url.trim().replace(/\/+$/, '')
-  return /^https?:\/\//.test(u) ? u : `https://${u}`
+  const full = /^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : `https://${u}`
+  try {
+    const p = new URL(full)
+    return `${p.protocol}//${p.host}${p.pathname.replace(/\/+$/, '')}`
+  } catch {
+    return full
+  }
+}
+
+/** A secret key (sb_secret_… or a legacy service_role JWT): it bypasses row-level security, so it must never be in the app or in a link. */
+export function isSecretKey(key: string) {
+  const k = key.trim()
+  if (k.startsWith('sb_secret_')) return true
+  const payload = k.split('.')[1]
+  if (!payload) return false
+  try {
+    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))?.role === 'service_role'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Opening a setup link connects only the browser it opens in. Says so where that is probably not the app the
+ * person uses: an app's built-in browser, or an iPhone Safari tab (a Home Screen app keeps its own storage).
+ */
+export function separateStorageNote(nav: { userAgent: string; standalone?: boolean }): string | undefined {
+  if (/FBAN|FBAV|FB_IAB|Instagram|; wv\)/.test(nav.userAgent))
+    return 'This connects only this app’s built-in browser. To connect your browser or the installed app, copy the link and paste it there under Settings → Team.'
+  if (nav.standalone === false)
+    return 'This connects Safari. If the app is on your Home Screen, copy the link and paste it there under Settings → Team.'
+  return undefined
 }
 
 /** A Supabase project address (https://<project>.supabase.co); anything else is refused. */
@@ -91,17 +122,22 @@ export const hostOf = (url: string) => {
 export const setupLink = (c: TeamConfig, base: string) =>
   `${base}#team=${btoa(JSON.stringify(c)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
 
-export function readSetupLink(hash: string): TeamConfig | undefined {
-  const m = hash.match(/[#&]team=([\w-]+)/)
-  if (!m) return undefined
-  try {
-    const c = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')))
-    if (typeof c?.url !== 'string' || typeof c?.key !== 'string' || !c.key.trim()) return undefined
-    const url = normalizeUrl(c.url)
-    return isProjectUrl(url) ? { url, key: c.key.trim() } : undefined
-  } catch {
-    return undefined
+/**
+ * The project in a setup link: the address bar's hash, or pasted text that contains the link (the whole
+ * message, the link pasted twice or after a cut-off copy, a messenger's %23 for #).
+ */
+export function readSetupLink(text: string): TeamConfig | undefined {
+  for (const m of text.replace(/%23team%3D/gi, '#team=').matchAll(/[#&]team=([\w-]+)/g)) {
+    try {
+      const c = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')))
+      if (typeof c?.url !== 'string' || typeof c?.key !== 'string' || !c.key.trim() || isSecretKey(c.key)) continue
+      const url = normalizeUrl(c.url)
+      if (isProjectUrl(url)) return { url, key: c.key.trim() }
+    } catch {
+      // not this one; a later copy in the same text may be whole
+    }
   }
+  return undefined
 }
 
 async function call(url: string, init: RequestInit) {
@@ -144,6 +180,8 @@ function toSession(
  */
 export async function checkConfig(c: TeamConfig): Promise<{ signupOpen: boolean }> {
   if (!isProjectUrl(c.url)) throw new TeamError('That is not a Supabase project address (https://….supabase.co).')
+  if (isSecretKey(c.key))
+    throw new TeamError('That is a secret key. Use the publishable (anon) key from Project Settings → API Keys; a secret key must never be in the app.')
   const res = await call(`${c.url}/auth/v1/settings`, { headers: { apikey: c.key } })
   if (res.status === 401 || res.status === 403) throw new TeamError('The key does not belong to this project.')
   if (!res.ok) throw new TeamError(await failure(res))

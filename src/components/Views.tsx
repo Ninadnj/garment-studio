@@ -221,7 +221,7 @@ export function SettingsView({ settings, setSettings }: { settings: Settings; se
               label="Hugging Face token (optional)"
               hint={
                 <>
-                  Used only for the backups on the shared GPUs. Hugging Face lets free users make about 3 images a
+                  Used for the backups on the shared GPUs and for the online background remover. Hugging Face lets free users make about 3 images a
                   day there. Without a token they come out of 2 GPU minutes
                   shared by everything on your internet connection, which often covers only 2. A token from a free account
                   gives 5 minutes on your own account; one from a PRO account ($9 a month) gives 8 times that. Create a
@@ -293,9 +293,30 @@ export function SettingsView({ settings, setSettings }: { settings: Settings; se
             onChange={(currency) => setSettings({ ...settings, currency })}
           />
         </Field>
-        <Field label="Added to copied details" hint="Your own lines under every product’s details, e.g. how to order and delivery.">
+        <Field label="Shop name" hint="At the top of catalogue pages.">
+          <input
+            className="input"
+            aria-label="Shop name"
+            value={settings.shopName}
+            onChange={(e) => setSettings({ ...settings, shopName: e.target.value })}
+          />
+        </Field>
+        <Field label="Contact line" hint="At the bottom of catalogue pages.">
+          <input
+            className="input"
+            aria-label="Contact line"
+            placeholder="e.g. @yourshop · 555 12 34 56"
+            value={settings.contactLine}
+            onChange={(e) => setSettings({ ...settings, contactLine: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="Added to copied details"
+          hint="Your own lines under every product’s details and post captions, e.g. how to order and delivery."
+        >
           <textarea
             className="input"
+            aria-label="Added to copied details"
             rows={3}
             value={settings.shopInfo}
             onChange={(e) => setSettings({ ...settings, shopInfo: e.target.value })}
@@ -308,7 +329,7 @@ export function SettingsView({ settings, setSettings }: { settings: Settings; se
       <div className="panel">
         <Field
           label="Background remover for new photos"
-          hint="Runs on this device, free. Each downloads once: BRIA about 90 MB (free for non-commercial use), IMG.LY about 80 MB, IMG.LY light about 40 MB."
+          hint="Runs on this device, free. Each downloads once: Standard 88 MB, Second method about 80 MB, Light about 40 MB. Standard (BRIA RMBG-1.4) was the cleanest of the three on test photos; BRIA allows free non-commercial use and sells licences for commercial use. The other two are IMG.LY’s open-source remover."
         >
           <Chips
             label="Background remover"
@@ -332,7 +353,7 @@ export function SettingsView({ settings, setSettings }: { settings: Settings; se
           Photos, products, models and results are stored in this browser{loadConfig() ? '' : ' only'}
           {storageMb !== undefined ? ` (${storageMb} MB on this device)` : ''}.
           {loadConfig() && ' Products, with their photos and try-on results, are also shared with your team’s Supabase project.'}{' '}
-          Background removal never leaves the device. Try-on sends the photos to Kuaishou (Kolors), WeShop and Hugging Face for the free service, or to
+          Background removal runs on the device; only “Try another way → Online” sends that one photo to Hugging Face. Try-on sends the photos to Kuaishou (Kolors), WeShop and Hugging Face for the free service, or to
           FASHN. WeShop also gets your IP address, and the Kolors demo passes the photos on to Kuaishou without
           encryption (http).
           New models send only their description, to HiDream and Hugging Face, or to FASHN.

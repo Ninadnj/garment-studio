@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Adjust } from '../lib/adjust'
+import { type Adjust, NO_ADJUST } from '../lib/adjust'
+import { acceptNote, cutIssues, cutNoteKey, isNoteAccepted, lightFix, photoIssues, photoNoteKey } from '../lib/checks'
 import { type Box, alphaBox, drawFit, exportFit, prepareSource } from '../lib/compose'
+import { CUT_ISSUE_TEXT, type CutIssue } from '../lib/cutcheck'
 import type { LookRec, ModelRec } from '../lib/db'
 import { type GarmentStatus, type Garments, shownCut } from '../lib/garments'
-import { useBitmap, useObjectURL } from '../lib/hooks'
-import { downscale, loadBitmap, saveFiles, stamp, toFile } from '../lib/image'
+import { useBitmap, useObjectURL, useStableBlob } from '../lib/hooks'
+import { downscale, loadBitmap, releaseCanvas, saveFiles, stamp, toFile } from '../lib/image'
+import { PHOTO_ISSUE_TEXT, type PhotoIssue } from '../lib/photocheck'
 import type { Products } from '../lib/products'
-import type { LookPrefs, Remover, Settings } from '../lib/settings'
+import type { LookPrefs, Settings } from '../lib/settings'
+import { CompareSheet } from './CompareSheet'
 import { IconBrush, IconCompare, IconDownload, IconTrash, IconUpload } from './Icons'
 import { LookPanel } from './LookPanel'
 import { MaskEditor } from './MaskEditor'
@@ -63,6 +67,10 @@ export function Studio(p: Props) {
   const [dragging, setDragging] = useState(false)
   const [savingAll, setSavingAll] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [comparingId, setComparingId] = useState<string>() // the photo "Try another way" is open for
+  const [fixingId, setFixingId] = useState<string>() // the photo whose light is being read
+  const [photoNotes, setPhotoNotes] = useState<PhotoIssue[]>([])
+  const [cutNotes, setCutNotes] = useState<CutIssue[]>([])
   const fileInput = useRef<HTMLInputElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const holdTimer = useRef(0)
@@ -74,6 +82,36 @@ export function Studio(p: Props) {
   const photoUrl = useObjectURL(g?.photo)
   const status = g ? G.statusOf(g) : undefined
   const ready = !!(bmp && box && cutBlob)
+
+  // What the app can't repair in the photo (dark, blurry, small), said once under it.
+  const notedPhoto = useStableBlob(g?.photo)
+  useEffect(() => {
+    setPhotoNotes([])
+    if (!g || !notedPhoto || isNoteAccepted(photoNoteKey(g.id))) return
+    let alive = true
+    photoIssues(notedPhoto).then(
+      (r) => alive && setPhotoNotes(r),
+      () => {},
+    )
+    return () => {
+      alive = false
+    }
+  }, [g?.id, notedPhoto])
+
+  // The automatic cutout is checked for the seller; one fixed by hand, or kept as it is, is theirs to judge.
+  const checkedCut = useStableBlob(g?.removeBg && !g.editedCut ? g.autoCut : undefined)
+  useEffect(() => {
+    setCutNotes([])
+    if (!g || !checkedCut || isNoteAccepted(cutNoteKey(g.id, checkedCut))) return
+    let alive = true
+    cutIssues(checkedCut).then(
+      (r) => alive && setCutNotes(r),
+      () => {},
+    )
+    return () => {
+      alive = false
+    }
+  }, [g?.id, checkedCut])
 
   function endCompare() {
     clearTimeout(holdTimer.current)
@@ -92,12 +130,15 @@ export function Studio(p: Props) {
 
   // Another photo was opened from elsewhere (a product): the brush belongs to the photo it was opened on.
   useEffect(() => setEditing(false), [g?.id])
+  const comparingWays = !!g && comparingId === g.id
 
   useEffect(() => {
     if (editing || !ready || !canvas.current) return
     const id = requestAnimationFrame(() => {
       const src = prepareSource(bmp!, box!, g?.adjust, PREVIEW_SIDE)
       drawFit(canvas.current!, src.src, src.box, look, PREVIEW_SIDE)
+      // Dragging a slider makes a copy every frame: free it now rather than when it is collected (iPhones).
+      if (src.src !== bmp && src.src instanceof HTMLCanvasElement) releaseCanvas(src.src)
     })
     return () => cancelAnimationFrame(id)
   }, [bmp, box, look, g?.adjust, editing, ready])
@@ -171,20 +212,31 @@ export function Studio(p: Props) {
     try {
       const files: File[] = []
       let waiting = 0
+      let failed = 0
       for (const [i, x] of G.garments.entries()) {
         const blob = shownCut(x)
         if (!blob) {
           waiting++
           continue
         }
-        const b = await loadBitmap(blob)
+        // One photo that can't be made (out of memory on a phone) doesn't stop the others.
         try {
-          files.push(toFile(await exportFit(b, alphaBox(b), look, x.adjust), `garment-${String(i + 1).padStart(2, '0')}`))
-        } finally {
-          b.close()
+          const b = await loadBitmap(blob)
+          try {
+            files.push(toFile(await exportFit(b, alphaBox(b), look, x.adjust), `garment-${String(i + 1).padStart(2, '0')}`))
+          } finally {
+            b.close()
+          }
+        } catch (e) {
+          console.error(e)
+          failed++
         }
       }
-      if (waiting) toast({ text: `${waiting} still being processed, not included.` })
+      if (waiting || failed)
+        toast({
+          text: [waiting && `${waiting} still being processed`, failed && `${failed} could not be made`].filter(Boolean).join(', ') + ', not included.',
+          error: failed > 0,
+        })
       if (files.length) await share(files, `garments-${stamp()}.zip`)
     } finally {
       setSavingAll(false)
@@ -210,12 +262,32 @@ export function Studio(p: Props) {
       })
   }
 
-  function setRemover(remover: Remover) {
-    if (!g) return
-    p.setSettings({ ...p.settings, remover })
-    if (remover === g.remover) return
-    if (g.editedCut && !confirm('Switching the remover discards your brush edits on this photo.')) return
-    G.update(g.id, { remover, autoCut: undefined, editedCut: undefined })
+  async function fixLight() {
+    if (!g || !cutBlob) return
+    const { id } = g
+    const before = g.adjust ?? NO_ADJUST
+    setFixingId(id)
+    try {
+      const fix = await lightFix(g.photo, cutBlob)
+      // Nothing proposed also when it can't tell (no plain background to read the light from): the seller's
+      // own slider values stay.
+      if (!fix.exposure && !fix.contrast && !fix.warmth) {
+        toast({ text: 'Nothing to fix automatically. The sliders under Light and colour change it by hand.' })
+        return
+      }
+      const adjust = { ...fix, saturation: before.saturation }
+      if (adjust.exposure === before.exposure && adjust.contrast === before.contrast && adjust.warmth === before.warmth) {
+        toast({ text: 'The light is already fixed.' })
+        return
+      }
+      G.update(id, { adjust })
+      toast({ text: 'Light fixed', action: { label: 'Undo', run: () => G.update(id, { adjust: before }) } })
+    } catch (e) {
+      console.error(e)
+      toast({ text: 'Could not read the photo to fix its light.', error: true })
+    } finally {
+      setFixingId(undefined)
+    }
   }
 
   async function useFullScreenshot() {
@@ -269,6 +341,10 @@ export function Studio(p: Props) {
               <br />
               On a Mac, drop or paste them here.
             </span>
+            <span className="muted tips">
+              Cleanest results: a plain background in another colour than the garment, daylight, the whole garment in the
+              picture.
+            </span>
           </button>
         ) : editing && cutBlob && g.removeBg ? (
           <MaskEditor
@@ -276,7 +352,7 @@ export function Studio(p: Props) {
             active={p.active}
             src={g.photo}
             cut={cutBlob}
-            auto={g.autoCut ?? g.photo}
+            auto={g.autoCut}
             onCancel={() => setEditing(false)}
             onDone={(edited) => {
               G.update(g.id, { editedCut: edited })
@@ -317,10 +393,54 @@ export function Studio(p: Props) {
                 <button className="btn-text" onClick={() => G.retry(g.id)}>
                   Try again
                 </button>
-                <button className="btn-text" onClick={() => G.update(g.id, { removeBg: false })}>
+                <button
+                  className="btn-text"
+                  onClick={() => {
+                    setEditing(false)
+                    G.update(g.id, { removeBg: false })
+                  }}
+                >
                   Keep the background
                 </button>
               </div>
+            )}
+            {(photoNotes.length > 0 || cutNotes.length > 0) && !busy && status?.stage !== 'error' && (
+              <ul className="photo-notes small">
+                {cutNotes.length > 0 && checkedCut && (
+                  <li>
+                    <span>{cutNotes.map((i) => CUT_ISSUE_TEXT[i]).join(' ')}</span>
+                    <button className="btn-text small" onClick={() => setComparingId(g.id)}>
+                      Try another way
+                    </button>
+                    <button className="btn-text small" onClick={() => setEditing(true)} disabled={!ready}>
+                      Fix by hand
+                    </button>
+                    <button
+                      className="btn-text small"
+                      onClick={() => {
+                        acceptNote(cutNoteKey(g.id, checkedCut))
+                        setCutNotes([])
+                      }}
+                    >
+                      It is fine
+                    </button>
+                  </li>
+                )}
+                {photoNotes.length > 0 && (
+                  <li className="muted">
+                    <span>{photoNotes.map((i) => PHOTO_ISSUE_TEXT[i]).join(' ')}</span>
+                    <button
+                      className="btn-text small"
+                      onClick={() => {
+                        acceptNote(photoNoteKey(g.id))
+                        setPhotoNotes([])
+                      }}
+                    >
+                      It is fine
+                    </button>
+                  </li>
+                )}
+              </ul>
             )}
             {g.raw && (
               <p className="muted small note">
@@ -335,9 +455,9 @@ export function Studio(p: Props) {
                 className="btn-secondary"
                 onClick={() => setEditing(true)}
                 disabled={!ready || !g.removeBg}
-                title="Erase or restore parts by hand (E)"
+                title="Erase or bring back parts by hand (E)"
               >
-                <IconBrush /> Erase / restore
+                <IconBrush /> Fix by hand
               </button>
               <button
                 className="btn-secondary icon-only"
@@ -402,10 +522,11 @@ export function Studio(p: Props) {
                 setEditing(false)
                 G.update(g.id, { removeBg })
               },
-              remover: g.remover,
-              setRemover,
-              adjust: g.adjust ?? { exposure: 0, contrast: 0, saturation: 0, warmth: 0 },
+              compare: g.removeBg && cutBlob ? () => setComparingId(g.id) : undefined,
+              adjust: g.adjust ?? NO_ADJUST,
               setAdjust: (adjust: Adjust) => G.update(g.id, { adjust }),
+              fixLight: cutBlob ? fixLight : undefined,
+              fixingLight: fixingId === g.id,
             }
           }
         />
@@ -436,6 +557,19 @@ export function Studio(p: Props) {
           goSettings={p.goSettings}
         />
       </section>
+      {comparingWays && g && (
+        <CompareSheet
+          key={g.id}
+          g={g}
+          bg={look.bg}
+          token={p.settings.hfToken || undefined}
+          onUse={(patch) => {
+            setEditing(false) // the brush belongs to the cutout being replaced
+            G.update(g.id, patch)
+          }}
+          onClose={() => setComparingId(undefined)}
+        />
+      )}
       {dragging && <div className="drop-hint">Drop photos to add them</div>}
     </div>
   )

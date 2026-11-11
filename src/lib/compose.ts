@@ -1,5 +1,5 @@
 import { type Adjust, applyAdjust, isNeutral } from './adjust'
-import { canvasToBlob } from './image'
+import { canvasToBlob, releaseCanvas } from './image'
 import type { Aspect, LookPrefs, ShadowStyle } from './settings'
 
 export interface Box {
@@ -21,6 +21,7 @@ export function alphaBox(src: Source): Box {
   const ctx = c.getContext('2d', { willReadFrequently: true })!
   ctx.drawImage(src, 0, 0)
   const { data, width, height } = ctx.getImageData(0, 0, c.width, c.height)
+  releaseCanvas(c) // the pixels are read; the full-size canvas is not needed any more
   let minX = width
   let minY = height
   let maxX = -1
@@ -55,7 +56,7 @@ function hexRgb(hex: string): [number, number, number] {
 const mixRgb = ([r, g, b]: number[], t: number, k: number) =>
   `rgb(${Math.round(r + (t - r) * k)}, ${Math.round(g + (t - g) * k)}, ${Math.round(b + (t - b) * k)})`
 
-function fillBg(ctx: CanvasRenderingContext2D, W: number, H: number, look: Pick<LookPrefs, 'bg' | 'light'>) {
+export function fillBg(ctx: CanvasRenderingContext2D, W: number, H: number, look: Pick<LookPrefs, 'bg' | 'light'>) {
   ctx.clearRect(0, 0, W, H)
   if (look.bg === 'transparent') return
   ctx.fillStyle = look.bg
@@ -71,14 +72,14 @@ function fillBg(ctx: CanvasRenderingContext2D, W: number, H: number, look: Pick<
   ctx.fillRect(0, 0, W, H)
 }
 
-const SHADOWS: Record<Exclude<ShadowStyle, 'none'>, { alpha: number; blur: number; y: number }> = {
+export const SHADOWS: Record<Exclude<ShadowStyle, 'none'>, { alpha: number; blur: number; y: number }> = {
   soft: { alpha: 0.22, blur: 0.035, y: 0.014 }, // lifted off the background
   close: { alpha: 0.32, blur: 0.01, y: 0.004 }, // lying flat on it
   floor: { alpha: 0.16, blur: 0.008, y: 0.002 }, // contact edge, plus the floor shadow below
 }
 
 /** Soft elliptical shadow under the garment, as if it stood on the floor. */
-function drawFloorShadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+export function drawFloorShadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
   const rx = w * 0.46
   const ry = Math.max(h * 0.045, 4)
   ctx.save()
@@ -159,25 +160,44 @@ export function drawReplace(canvas: HTMLCanvasElement, cut: ImageBitmap, bg: str
 export const encode = (canvas: HTMLCanvasElement, bg: string) =>
   bg === 'transparent' ? canvasToBlob(canvas, 'image/png') : canvasToBlob(canvas, 'image/jpeg', 0.94)
 
+/** Releases a canvas made by prepareSource (not the source it was given). */
+const releasePrepared = (p: { src: Source }, given: Source) => {
+  if (p.src !== given && p.src instanceof HTMLCanvasElement) releaseCanvas(p.src)
+}
+
 export async function exportFit(cut: ImageBitmap, box: Box, look: LookPrefs, adjust?: Adjust) {
   const p = prepareSource(cut, box, adjust, Infinity)
   const c = document.createElement('canvas')
-  drawFit(c, p.src, p.box, look, EXPORT_SIDE)
-  return encode(c, look.bg)
+  try {
+    drawFit(c, p.src, p.box, look, EXPORT_SIDE)
+    return await encode(c, look.bg)
+  } finally {
+    releaseCanvas(c)
+    releasePrepared(p, cut)
+  }
 }
 
 export async function exportReplace(cut: ImageBitmap, bg: string) {
   const c = document.createElement('canvas')
-  drawReplace(c, cut, bg)
-  return encode(c, bg)
+  try {
+    drawReplace(c, cut, bg)
+    return await encode(c, bg)
+  } finally {
+    releaseCanvas(c)
+  }
 }
 
 /** Product photo for the try-on services: the cutout centred on plain white. */
 export async function productImage(cut: ImageBitmap, box: Box, adjust?: Adjust, longSide = 1536) {
   const p = prepareSource(cut, box, adjust, longSide)
   const c = document.createElement('canvas')
-  drawFit(c, p.src, p.box, { bg: '#ffffff', light: false, aspect: '3:4', padding: 0.06, shadow: 'none' }, longSide)
-  return canvasToBlob(c, 'image/jpeg', 0.95)
+  try {
+    drawFit(c, p.src, p.box, { bg: '#ffffff', light: false, aspect: '3:4', padding: 0.06, shadow: 'none' }, longSide)
+    return await canvasToBlob(c, 'image/jpeg', 0.95)
+  } finally {
+    releaseCanvas(c)
+    releasePrepared(p, cut)
+  }
 }
 
 /** Small preview for the photo strip: cutouts cropped to the garment (PNG), photos as JPEG. */
@@ -192,7 +212,11 @@ export async function thumbnail(blob: Blob, cutout: boolean, side = 320): Promis
     const ctx = c.getContext('2d')!
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(bmp, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height)
-    return cutout ? canvasToBlob(c, 'image/png') : canvasToBlob(c, 'image/jpeg', 0.85)
+    try {
+      return await (cutout ? canvasToBlob(c, 'image/png') : canvasToBlob(c, 'image/jpeg', 0.85))
+    } finally {
+      releaseCanvas(c)
+    }
   } finally {
     bmp.close()
   }

@@ -66,12 +66,15 @@ export const SIZE_SYSTEMS: Record<SizeSystem, { label: string; sizes: string[]; 
 
 export const SIZE_SYSTEM_IDS = Object.keys(SIZE_SYSTEMS) as SizeSystem[]
 
+/** A code in the form the app gives out (up to 5 digits); long numbers typed by hand (barcodes, dates) are not. */
+const isNumberCode = (code: string) => /^\d{1,5}$/.test(code)
+
 /**
  * Next number code (0001, 0002…), after the highest in use and the highest ever given out here (`given`), so a
  * deleted product's code isn't reused. Codes typed by hand in another form are skipped.
  */
 export function nextCode(products: ProductRec[], given = 0) {
-  const max = Math.max(given, ...products.map((p) => (/^\d+$/.test(p.code) ? Number(p.code) : 0)))
+  const max = Math.max(given <= 99_999 ? given : 0, ...products.map((p) => (isNumberCode(p.code) ? Number(p.code) : 0)))
   return String(max + 1).padStart(4, '0')
 }
 
@@ -129,15 +132,30 @@ export function sizesText(p: ProductRec, sizes = p.sizes.map((s) => s.size)) {
   return sizes.join(', ') + (numbers ? ` ${suffix}` : '')
 }
 
+/** One size as buyers read it: "38 EU" for a number in a system that has a label, otherwise as written. */
+export function sizeLabel(p: Pick<ProductRec, 'sizeSystem'>, size: string) {
+  const suffix = SIZE_SYSTEMS[p.sizeSystem ?? 'letter'].suffix
+  return suffix && /^\d+(\.\d+)?$/.test(size) ? `${size} ${suffix}` : size
+}
+
+const SYMBOLS: Record<Currency, string> = { GEL: '₾', USD: '$', EUR: '€', GBP: '£' }
+
+/**
+ * "45 ₾", "1200 ₾", "12 500 ₾", "12,50 €": the Georgian way, the same on every phone whatever its language
+ * (the spaces are no-break spaces).
+ */
 export function formatPrice(price: number | undefined, currency: Currency) {
-  if (price === undefined) return ''
-  const digits = Number.isInteger(price) ? 0 : 2
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(price)
+  if (price === undefined || !Number.isFinite(price)) return ''
+  const [int, dec] = Math.abs(price).toFixed(Number.isInteger(price) ? 0 : 2).split('.')
+  const grouped = int.length > 4 ? int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : int
+  return `${price < 0 ? '−' : ''}${grouped}${dec ? `,${dec}` : ''} ${SYMBOLS[currency]}`
+}
+
+/** "−26%" for a sale price at least 1 % below the price. */
+export function discountText(price: number | undefined, sale: number | undefined) {
+  if (price === undefined || sale === undefined || !(price > 0) || !(sale < price)) return undefined
+  const pct = Math.round((1 - sale / price) * 100)
+  return pct >= 1 ? `−${pct}%` : undefined
 }
 
 /** "S 2 · M 1": sizes still for sale, with how many. */
@@ -149,7 +167,7 @@ export const stockText = (p: ProductRec) =>
 export interface ProductFilter {
   query: string
   status: ProductStatus | 'all' | 'available' // available: for sale or reserved
-  size?: string // only products with this size in stock
+  size?: string // only products with this size in stock, as sizeLabel gives it ("38 EU", "M")
   audience?: Audience
 }
 
@@ -157,7 +175,7 @@ export interface ProductFilter {
 export function matches(p: ProductRec, f: ProductFilter) {
   if (f.status === 'available' ? p.status !== 'for_sale' && p.status !== 'reserved' : f.status !== 'all' && p.status !== f.status)
     return false
-  if (f.size && !available(p).some((s) => s.size === f.size)) return false
+  if (f.size && !available(p).some((s) => sizeLabel(p, s.size) === f.size)) return false
   if (f.audience && p.audience !== f.audience) return false
   const words = f.query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (!words.length) return true
@@ -170,7 +188,7 @@ export function matches(p: ProductRec, f: ProductFilter) {
     p.condition,
     p.measurements,
     p.notes,
-    p.reservedFor ?? '',
+    p.status === 'reserved' ? (p.reservedFor ?? '') : '', // an old reservation's name is kept, but not found
     ...p.colours,
     ...p.sizes.map((s) => s.size),
     ...(p.postedOn ?? []),
@@ -183,30 +201,32 @@ export function matches(p: ProductRec, f: ProductFilter) {
 // Letter sizes in body order; numbers sort as numbers after them; anything else last.
 const LETTER_ORDER = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '2XL', '3XL', 'One size']
 
-/** Sizes that are in stock somewhere in the catalogue, in a sensible order (letters, then numbers). */
+/** Sizes in stock somewhere in the catalogue, as sizeLabel gives them ("38 EU" and "38 IT" stay apart), letters first. */
 export function sizesInStock(products: ProductRec[]) {
-  const sizes = new Set(products.flatMap((p) => available(p).map((s) => s.size)))
+  const sizes = new Set(products.flatMap((p) => available(p).map((s) => sizeLabel(p, s.size))))
   const rank = (s: string) => {
     const i = LETTER_ORDER.indexOf(s)
     if (i >= 0) return i
-    const n = Number(s)
-    return Number.isFinite(n) ? 100 + n : 100_000
+    const n = s.match(/^(\d+(?:\.\d+)?)(?: [A-Z]{2})?$/) // "38", or "38 EU" from sizeLabel
+    return n ? 100 + Number(n[1]) : 100_000
   }
   return [...sizes].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }))
 }
 
 /**
- * Plain facts for a post or a listing, one per line, in the order buyers ask for them; then the shop's own
- * lines from Settings (how to order, delivery).
+ * Plain facts for a post or a listing, one per line, in the order buyers ask for them, after the seller's own
+ * words for posts; then the shop's own lines from Settings (how to order, delivery).
  */
 export function detailsText(p: ProductRec, currency: Currency, shopInfo = '') {
   const sizes = available(p).map((s) => s.size)
-  const sale = p.salePrice !== undefined && p.price !== undefined && p.salePrice < p.price
+  const now = currentPrice(p)
+  const sale = now !== undefined && p.price !== undefined && now < p.price
   return [
     p.name,
+    p.postText?.trim(),
     sale
-      ? `Price: ${formatPrice(p.salePrice, currency)} (was ${formatPrice(p.price, currency)})`
-      : p.price !== undefined && `Price: ${formatPrice(p.price, currency)}`,
+      ? `Price: ${formatPrice(now, currency)} (was ${formatPrice(p.price, currency)})`
+      : now !== undefined && `Price: ${formatPrice(now, currency)}`,
     sizes.length > 0 && `Size${sizes.length > 1 ? 's' : ''}: ${sizesText(p, sizes)}`,
     p.colours.length > 0 && `Colour: ${p.colours.join(', ')}`,
     p.brand && `Brand: ${p.brand}`,
@@ -258,6 +278,10 @@ export function useProducts() {
   const [loaded, setLoaded] = useState(false)
   const list = useRef<ProductRec[]>([])
   const writes = useRef(new Map<string, number>())
+  // Fields edited here and not yet saved, per product: a teammate's change to other fields still comes in.
+  const dirty = useRef(new Map<string, Set<keyof ProductRec>>())
+  // Fields being written right now: a re-read that started before the write finished must not undo them.
+  const writing = useRef(new Map<string, { fields: Set<keyof ProductRec>; n: number }>())
 
   const commit = (next: ProductRec[]) => {
     list.current = next
@@ -271,13 +295,26 @@ export function useProducts() {
       .finally(() => setLoaded(true))
   }, [])
 
-  // Saved by another window or by team sync: re-read, keeping edits here that are still waiting to be saved.
+  // Saved by another window or by team sync: re-read, keeping the fields edited here that are still waiting to
+  // be saved; the rest of the record is the new version.
   useEffect(
     () =>
       onOtherWindowChange((store) => {
         if (store !== 'products') return
         listAll('products')
-          .then((rows) => commit(rows.map((r) => (writes.current.has(r.id) ? (list.current.find((p) => p.id === r.id) ?? r) : r))))
+          .then((rows) =>
+            commit(
+              rows.map((r) => {
+                const fields = new Set([...(dirty.current.get(r.id) ?? []), ...(writing.current.get(r.id)?.fields ?? [])])
+                const mine = fields.size ? list.current.find((p) => p.id === r.id) : undefined
+                if (!mine) return r
+                const merged: Record<string, unknown> = { ...r }
+                for (const k of fields) merged[k] = mine[k]
+                // Newer than both versions, so the merge is never taken for one the team already has.
+                return { ...(merged as unknown as ProductRec), updatedAt: Math.max(Date.now(), r.updatedAt + 1, mine.updatedAt) }
+              }),
+            ),
+          )
           .catch(reportWriteError)
       }),
     [],
@@ -286,8 +323,19 @@ export function useProducts() {
   function write(id: string) {
     clearTimeout(writes.current.get(id))
     writes.current.delete(id)
+    const fields = dirty.current.get(id) ?? new Set<keyof ProductRec>()
+    dirty.current.delete(id)
     const latest = list.current.find((p) => p.id === id)
-    if (latest) putRec('products', latest).catch(reportWriteError)
+    if (!latest) return
+    const w = writing.current.get(id) ?? { fields: new Set<keyof ProductRec>(), n: 0 }
+    fields.forEach((k) => w.fields.add(k))
+    w.n++
+    writing.current.set(id, w)
+    putRec('products', latest)
+      .catch(reportWriteError)
+      .finally(() => {
+        if (--w.n === 0 && writing.current.get(id) === w) writing.current.delete(id)
+      })
   }
 
   // Leaving the app (closing the tab, switching apps on a phone), or a newer version taking over the
@@ -308,7 +356,7 @@ export function useProducts() {
   function create(patch: Partial<ProductRec> = {}) {
     requestPersistence()
     const rec = newProduct(patch, list.current, Date.now(), readGiven())
-    if (/^\d+$/.test(rec.code))
+    if (isNumberCode(rec.code))
       try {
         localStorage.setItem(GIVEN_KEY, String(Number(rec.code)))
       } catch {}
@@ -317,8 +365,15 @@ export function useProducts() {
     return rec
   }
 
-  function update(id: string, patch: Partial<ProductRec>) {
+  /** `patch` can be worked out from the product as it is now (e.g. a later Undo of one change). */
+  function update(id: string, change: Partial<ProductRec> | ((p: ProductRec) => Partial<ProductRec>)) {
+    const current = list.current.find((p) => p.id === id)
+    if (!current) return
+    const patch = typeof change === 'function' ? change(current) : change
     commit(list.current.map((p) => (p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p)))
+    const fields = dirty.current.get(id) ?? new Set()
+    for (const k of Object.keys(patch) as (keyof ProductRec)[]) fields.add(k)
+    dirty.current.set(id, fields)
     clearTimeout(writes.current.get(id))
     writes.current.set(
       id,
@@ -330,6 +385,7 @@ export function useProducts() {
   function remove(id: string) {
     clearTimeout(writes.current.get(id))
     writes.current.delete(id)
+    dirty.current.delete(id)
     const rec = list.current.find((p) => p.id === id)
     commit(list.current.filter((p) => p.id !== id))
     deleteRec('products', id).catch(reportWriteError)

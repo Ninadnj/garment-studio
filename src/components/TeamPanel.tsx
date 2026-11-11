@@ -28,6 +28,7 @@ export function TeamPanel() {
   const [session, setSession] = useState(loadSession)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [urlError, setUrlError] = useState<string>()
   const [url, setUrl] = useState('')
   const [key, setKey] = useState('')
   const [email, setEmail] = useState('')
@@ -42,11 +43,12 @@ export function TeamPanel() {
         .catch(() => {})
   }, [config?.url, config?.key])
 
-  // Sync can end the session (it expired and couldn't be renewed); a setup link can connect from outside.
+  // Sync can end the session (it expired and couldn't be renewed); a setup link can connect from outside,
+  // also to another project while the phase stays 'signed-out': every status notice re-reads both.
   useEffect(() => {
     setSession(loadSession())
     setConfig(loadConfig())
-  }, [status.phase])
+  }, [status])
 
   async function attempt(f: () => Promise<void>) {
     setBusy(true)
@@ -60,18 +62,25 @@ export function TeamPanel() {
     }
   }
 
-  // An app added to the iPhone Home Screen (or to the Dock from Safari) keeps its own storage, apart from
-  // Safari, and links open in Safari: there the setup link is pasted here instead of opened.
+  // An app added to the iPhone Home Screen keeps its own storage, apart from Safari, and links open in Safari:
+  // there the setup link is pasted here instead of opened. Returns whether the text held a whole link.
   function typeUrl(text: string) {
     const linked = readSetupLink(text)
     if (linked) {
       setUrl(linked.url)
       setKey(linked.key)
-      setError(undefined)
-    } else {
-      setUrl(text)
-      setError(text.includes('#team=') ? 'This setup link is incomplete. Copy the whole link again.' : undefined)
+      setUrlError(undefined)
+      return true
     }
+    setUrl(text)
+    setUrlError(
+      /team(=|%3D)/i.test(text)
+        ? 'This setup link is incomplete. Clear the box, copy the whole link again and paste it.'
+        : text.includes(location.host)
+          ? 'This is the app’s address without the team part. Copy the whole link from the message.'
+          : undefined,
+    )
+    return false
   }
 
   const connect = () =>
@@ -79,7 +88,8 @@ export function TeamPanel() {
       const c = { url: normalizeUrl(url), key: key.trim() }
       const { signupOpen } = await checkConfig(c)
       if (c.url !== config?.url) {
-        saveSession(undefined)
+        saveSession(undefined) // a running sync stops at its next request…
+        await teamSync.idle() // …and ends before its state is cleared
         resetSyncState()
       }
       saveConfig(c)
@@ -106,9 +116,10 @@ export function TeamPanel() {
     teamSync.setStatus({ phase: 'signed-out', error: undefined })
   }
 
-  function disconnect() {
+  async function disconnect() {
     if (!confirm('Disconnect from the team? Products stay on this device; changes made from now on are not shared.')) return
     saveSession(undefined)
+    await teamSync.idle()
     saveConfig(undefined)
     resetSyncState()
     setSession(undefined)
@@ -127,7 +138,7 @@ export function TeamPanel() {
 
   if (!config)
     return (
-      <div className="panel">
+      <div className="panel" id="team">
         <h2>Team</h2>
         <p className="muted small">
           Share products, their photos and their try-on results with your team through a free Supabase project. The
@@ -145,21 +156,45 @@ export function TeamPanel() {
               aria-label="Project URL"
               placeholder="https://….supabase.co or a setup link"
               autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              inputMode="url"
               value={url}
-              onChange={(e) => typeUrl(e.target.value)}
+              onPaste={(e) => {
+                const text = e.clipboardData.getData('text')
+                if (!/team(=|%3D)/i.test(text)) return // an ordinary paste
+                e.preventDefault() // a link replaces whatever is in the box
+                // The keyboard closes, so the filled-in key and Connect show.
+                if (typeUrl(text)) e.currentTarget.blur()
+              }}
+              onChange={(e) => {
+                if (typeUrl(e.target.value)) e.target.blur()
+              }}
             />
+            {urlError && (
+              <p className="error small" role="alert">
+                {urlError}
+              </p>
+            )}
           </Field>
           <Field label="Publishable key" hint="Project Settings → API Keys → publishable (anon) key. Never the secret key.">
             <input
               className="input"
               aria-label="Publishable key"
               autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
               spellCheck={false}
               value={key}
               onChange={(e) => setKey(e.target.value)}
             />
           </Field>
-          {error && <p className="error">{error}</p>}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
           <button className="btn" disabled={busy || !url.trim() || !key.trim()}>
             {busy && <Spinner />} Connect
           </button>
@@ -169,7 +204,7 @@ export function TeamPanel() {
 
   if (!session)
     return (
-      <div className="panel">
+      <div className="panel" id="team">
         <h2>Team</h2>
         <p className="muted small">
           Connected to {hostOf(config.url)}. Sign in with the account made for you in the project’s Authentication
@@ -202,7 +237,11 @@ export function TeamPanel() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </Field>
-          {error && <p className="error">{error}</p>}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
           <div className="row">
             <button className="btn" disabled={busy || !email.trim() || !password}>
               {busy && <Spinner />} Sign in
@@ -226,7 +265,7 @@ export function TeamPanel() {
           : 'Not synced yet'
 
   return (
-    <div className="panel">
+    <div className="panel" id="team">
       <h2>Team</h2>
       <p className="small">
         Signed in as <strong>{session.email}</strong> on {hostOf(config.url)}.

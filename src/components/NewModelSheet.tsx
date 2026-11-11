@@ -57,7 +57,7 @@ export function NewModelSheet({
           setDone(i + 1)
         }
       } else {
-        const out = await createModel(settings.fashnKey, prompt, settings, Number(count))
+        const out = await createModel(settings.fashnKey, prompt, settings, Number(count), undefined, ctrl.signal)
         blobs.push(...(await Promise.all(out.map(dataURLToBlob))))
       }
     } catch (e) {
@@ -88,6 +88,15 @@ export function NewModelSheet({
   }
 
   const free = settings.ai === 'free'
+  // Closing throws away models not yet kept, and a paid FASHN run still being made (it is charged anyway).
+  const confirmClose = () =>
+    results.length
+      ? confirm('Close without keeping these models?')
+      : started && !free
+        ? confirm('Close? FASHN is still making these images: they would be lost, and the credits are still used.')
+        : started && done > 0
+          ? confirm(`Close? ${done === 1 ? 'The model already made is' : `The ${done} models already made are`} lost, with the free tries they used.`)
+          : true
   if (!free && !settings.fashnKey)
     return (
       <Sheet title="New model" onClose={onClose}>
@@ -100,7 +109,7 @@ export function NewModelSheet({
 
   if (results.length)
     return (
-      <Sheet title="Choose models to keep" onClose={onClose}>
+      <Sheet title="Choose models to keep" onClose={onClose} confirmClose={confirmClose}>
         <div className="pick-grid">
           {results.map((b, i) => (
             <button
@@ -142,7 +151,7 @@ export function NewModelSheet({
   const cost = creditCost(settings, Number(count))
 
   return (
-    <Sheet title="New model" onClose={onClose}>
+    <Sheet title="New model" onClose={onClose} confirmClose={confirmClose}>
       <Field label="Gender">
         <Chips label="Gender" options={OPTIONS.gender} value={spec.gender} onChange={(v) => set('gender', v)} />
       </Field>

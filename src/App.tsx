@@ -3,6 +3,7 @@ import {
   type DbState,
   type LookRec,
   type ModelRec,
+  type ProductRec,
   deleteRec,
   getRec,
   listAll,
@@ -17,11 +18,13 @@ import { cutout } from './lib/cutout'
 import { useGarments } from './lib/garments'
 import { downscale, normalizeImage, uid } from './lib/image'
 import { useProducts } from './lib/products'
-import { hostOf, loadConfig, readSetupLink, saveConfig, saveSession } from './lib/team'
+import { hostOf, loadConfig, loadSession, readSetupLink, saveConfig, saveSession, separateStorageNote } from './lib/team'
 import { resetSyncState, startTeamSync, teamSync } from './lib/teamSync'
 import { type LookPrefs, type Settings, loadLook, loadSettings, saveLook, saveSettings } from './lib/settings'
 import { IconGear, IconGrid, IconHanger, IconPerson, IconTag } from './components/Icons'
+import { CatalogueSheet } from './components/CatalogueSheet'
 import { NewModelSheet } from './components/NewModelSheet'
+import { PostKitSheet } from './components/PostKitSheet'
 import { ProductSheet } from './components/ProductSheet'
 import { ProductsView } from './components/Products'
 import { Studio } from './components/Studio'
@@ -64,6 +67,8 @@ export default function App() {
   const G = useGarments(settings.remover, currentGarment)
   const P = useProducts()
   const [openProduct, setOpenProduct] = useState<string>()
+  const [kitFor, setKitFor] = useState<string>() // the product whose post kit is open
+  const [catalogue, setCatalogue] = useState<{ ids: string[]; size?: string }>()
 
   const setCurrentGarment = (id: string | undefined) => {
     setCurrentGarmentState(id)
@@ -105,26 +110,52 @@ export default function App() {
   // Team sync, and the setup link a teammate shares (it connects to the same project; each person signs in).
   // The link is read when the app opens, and when it is opened in a tab that already shows the app.
   useEffect(() => {
-    const readLink = () => {
-      if (!/[#&]team=/.test(location.hash)) return
-      const linked = readSetupLink(location.hash)
-      history.replaceState(null, '', location.pathname + location.search)
-      const current = loadConfig()
-      if (!linked) toast({ text: 'That setup link is not valid. Ask for a new one.', error: true })
-      else if (linked.url === current?.url) saveConfig(linked) // the same project, perhaps a new key
-      else if (
-        confirm(`Connect this app to the team catalogue at ${hostOf(linked.url)}? You will sign in with your own account.`)
-      ) {
-        // Nothing of another project (its sign-in, what it synced) carries over to this one.
-        saveSession(undefined)
-        resetSyncState()
-        saveConfig(linked)
-        teamSync.setStatus({ phase: 'signed-out', error: undefined })
-        setTab('settings')
-        toast({ text: 'Connected to your team’s catalogue. Sign in under Team.' })
-      }
+    // The link (with the project's publishable key) leaves the address once it has been used or refused as
+    // invalid. A cancelled link stays, so it can still be opened in another browser or copied from here.
+    const strip = () => history.replaceState(null, '', location.pathname + location.search)
+    const showTeam = (text: string) => {
+      setTab('settings')
+      toast({ text })
+      // Team is far down the Settings page.
+      setTimeout(() => document.getElementById('team')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150)
     }
-    readLink()
+    const readLink = async () => {
+      if (!/team(=|%3D)/i.test(location.hash)) return
+      const linked = readSetupLink(location.hash)
+      const current = loadConfig()
+      if (!linked) {
+        strip()
+        toast({ text: 'That setup link is not valid. Ask for a new one.', error: true })
+        return
+      }
+      if (linked.url === current?.url) {
+        // The same project, perhaps with a new key.
+        strip()
+        saveConfig(linked)
+        teamSync.setStatus({})
+        if (!loadSession()) showTeam('Connected to your team’s catalogue. Sign in under Team.')
+        else toast({ text: `Already connected to ${hostOf(linked.url)}.` })
+        return
+      }
+      const note = separateStorageNote(navigator as Navigator & { standalone?: boolean })
+      const question = [
+        `Connect this app to the team catalogue at ${hostOf(linked.url)}? You will sign in with your own account.`,
+        current && `Products on this device, including those from ${hostOf(current.url)}, will be shared with it when you sign in.`,
+        note,
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+      if (!confirm(question)) return
+      strip()
+      // Nothing of another project (its sign-in, what it synced) carries over to this one.
+      saveSession(undefined) // a running sync stops at its next request…
+      await teamSync.idle() // …and ends before its state is cleared
+      resetSyncState()
+      saveConfig(linked)
+      teamSync.setStatus({ phase: 'signed-out', error: undefined })
+      showTeam('Connected to your team’s catalogue. Sign in under Team.')
+    }
+    void readLink()
     window.addEventListener('hashchange', readLink)
     const stop = startTeamSync()
     return () => {
@@ -268,7 +299,13 @@ export default function App() {
           />
         </div>
         <div hidden={tab !== 'products'}>
-          <ProductsView P={P} garments={G.garments} currency={settings.currency} open={setOpenProduct} />
+          <ProductsView
+            P={P}
+            garments={G.garments}
+            currency={settings.currency}
+            open={setOpenProduct}
+            onCatalogue={(ids, size) => setCatalogue({ ids, size })}
+          />
         </div>
         <div hidden={tab !== 'models'}>
           <ModelsView
@@ -310,6 +347,46 @@ export default function App() {
           onDeleted={(rec) =>
             toast({ text: 'Product deleted. Its photos stay in the Studio.', action: { label: 'Undo', run: () => P.restore(rec) } })
           }
+          onPostKit={() => {
+            // One sheet at a time: the kit replaces the product sheet, and closing the kit brings it back.
+            setKitFor(openProduct)
+            setOpenProduct(undefined)
+          }}
+        />
+      )}
+
+      {kitFor && P.products.some((x) => x.id === kitFor) && (
+        <PostKitSheet
+          key={kitFor}
+          product={P.products.find((x) => x.id === kitFor)!}
+          garments={G.garments}
+          looks={looks}
+          look={look}
+          currency={settings.currency}
+          shopInfo={settings.shopInfo}
+          cutoutBusy={cutoutBusy}
+          makeCutout={makeCutout}
+          onUpdate={(patch) => P.update(kitFor, patch)}
+          onClose={() => {
+            setOpenProduct(kitFor)
+            setKitFor(undefined)
+          }}
+        />
+      )}
+
+      {catalogue && (
+        <CatalogueSheet
+          shown={catalogue.ids.map((id) => P.products.find((x) => x.id === id)).filter((x): x is ProductRec => !!x)}
+          size={catalogue.size}
+          garments={G.garments}
+          looks={looks}
+          look={look}
+          settings={settings}
+          onClose={() => setCatalogue(undefined)}
+          goShop={() => {
+            setCatalogue(undefined)
+            setTab('settings')
+          }}
         />
       )}
 

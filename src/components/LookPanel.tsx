@@ -1,17 +1,11 @@
 import { type Adjust, NO_ADJUST, isNeutral } from '../lib/adjust'
-import {
-  type Aspect,
-  type LookPrefs,
-  type Remover,
-  type ShadowStyle,
-  REMOVER_LABELS,
-  SHADOW_LABELS,
-} from '../lib/settings'
+import { type Aspect, type LookPrefs, type ShadowStyle, SHADOW_LABELS } from '../lib/settings'
 import { BackgroundPicker } from './BackgroundPicker'
-import { Chips, Field, Slider } from './ui'
+import { Chips, Field, Slider, Spinner } from './ui'
 
 const ASPECTS: Aspect[] = ['1:1', '4:5', '3:4', '9:16']
-const REMOVERS: Remover[] = ['rmbg14', 'isnet_fp16']
+// Named by where the picture goes; the numbers stay for those who know them.
+const ASPECT_LABELS: Record<Aspect, string> = { '1:1': 'Square 1:1', '4:5': 'Feed 4:5', '3:4': '3:4', '9:16': 'Story 9:16' }
 const SHADOWS: ShadowStyle[] = ['none', 'soft', 'close', 'floor']
 
 /** Controls for the selected photo (background removal, light and colour) and the shared look. */
@@ -25,10 +19,11 @@ export function LookPanel({
   photo?: {
     removeBg: boolean
     setRemoveBg: (on: boolean) => void
-    remover: Remover
-    setRemover: (r: Remover) => void
+    compare?: () => void // other ways to cut this photo out; unset while there is nothing to compare with
     adjust: Adjust
     setAdjust: (a: Adjust) => void
+    fixLight?: () => void // brightness and colour cast set from the photo; unset while the photo isn't ready
+    fixingLight: boolean
   }
 }) {
   const adj = photo?.adjust ?? NO_ADJUST
@@ -44,12 +39,18 @@ export function LookPanel({
               <span className="muted small block">Turn off for close-ups like labels or fabric</span>
             </span>
           </label>
-          {photo.removeBg && (
-            <Field label="Remover">
-              <Chips label="Remover" options={REMOVERS} labels={REMOVER_LABELS} value={photo.remover} onChange={photo.setRemover} />
-            </Field>
-          )}
-          <details className="adjust" open={!isNeutral(adj)}>
+          <div className="row quick-fixes">
+            <button className="btn-secondary" onClick={photo.fixLight} disabled={!photo.fixLight || photo.fixingLight}>
+              {photo.fixingLight && <Spinner />} Fix light
+            </button>
+            {photo.removeBg && (
+              <button className="btn-secondary" onClick={photo.compare} disabled={!photo.compare}>
+                Try another way
+              </button>
+            )}
+          </div>
+          {/* Locked while Fix light reads the photo: its result replaces these values. */}
+          <details className="adjust" open={!isNeutral(adj)} inert={photo.fixingLight}>
             <summary>
               Light and colour
               {!isNeutral(adj) && (
@@ -87,7 +88,7 @@ export function LookPanel({
           </label>
         )}
         <Field label="Format">
-          <Chips label="Format" options={ASPECTS} value={look.aspect} onChange={(aspect) => setLook({ ...look, aspect })} />
+          <Chips label="Format" options={ASPECTS} labels={ASPECT_LABELS} value={look.aspect} onChange={(aspect) => setLook({ ...look, aspect })} />
         </Field>
         <Field label={`Margin · ${Math.round(look.padding * 100)}%`}>
           <input

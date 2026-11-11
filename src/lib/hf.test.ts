@@ -63,6 +63,7 @@ describe('free services', () => {
   const HIDREAM_O1 = 'hidream-ai-hidream-o1-image.hf.space'
   const HIDREAM_I1 = 'hidream-ai-hidream-i1-dev.hf.space'
   const FLUX = 'black-forest-labs-flux-1-dev.hf.space'
+  const BIREFNET = 'zhengpeng7-birefnet-demo.hf.space'
 
   // The Spaces' configs, reduced to what the client reads; names, positions and input counts as on the real ones.
   const dep = (api_name: string | false, inputs: number) => ({
@@ -79,6 +80,7 @@ describe('free services', () => {
     [HIDREAM_O1]: { api_prefix: '/gradio_api', dependencies: [other, dep('_generate_wrapped', 6)] },
     [HIDREAM_I1]: { api_prefix: '/gradio_api', dependencies: [dep('generate_with_status', 3)] },
     [FLUX]: { api_prefix: '/gradio_api', dependencies: [other, other, dep('infer', 7)] },
+    [BIREFNET]: { api_prefix: '/gradio_api', dependencies: [other, other, dep('image', 3)] },
   }
 
   // A Space's answer: the completed event's data, a failure, a warning before an empty result (WeShop),
@@ -339,5 +341,38 @@ describe('free services', () => {
     await expect(freeModel('a model', {})).rejects.toThrow(
       /^HiDream could not make it right now \(Timed out after 300s\)\. It has no daily limit, so try again in a minute\. The backup, FLUX\.1 dev on Hugging Face, failed too: Today's free tries on Hugging Face are used up\./,
     )
+  })
+
+  // BiRefNet answers with one output, a before/after slider: the photo and then the cutout.
+  const slider = { data: [[{ path: '/tmp/photo.png' }, { path: '/tmp/cut.png' }]] }
+
+  it('takes the cutout, not the photo, from the online remover and sends it the token', async () => {
+    const { onlineCutout } = await import('./hf')
+    const { joined, downloaded, tokens } = fakeSpaces({ [BIREFNET]: slider })
+    const services = new Set<string | undefined>()
+    const out = await onlineCutout(garment, { token: 'hf_secret', onStatus: (s) => services.add(s.service) })
+    expect(await out.text()).toBe(BIREFNET)
+    expect(joined).toMatchObject([{ host: BIREFNET, fn_index: 2, data: [{ path: '/tmp/upload-0.jpg' }, '1024x1024', 'General'] }])
+    expect(downloaded).toEqual([`${BIREFNET}/file=/tmp/cut.png`])
+    expect(services).toEqual(new Set(['BiRefNet']))
+    expect(tokens.get(BIREFNET)).toEqual(new Set(['Bearer hf_secret']))
+  })
+
+  it('says so when the online remover has no cutout or the free tries are used up', async () => {
+    const { onlineCutout, SpaceError } = await import('./hf')
+    fakeSpaces({ [BIREFNET]: { data: [[{ path: '/tmp/photo.png' }]] } })
+    await expect(onlineCutout(garment, {})).rejects.toThrow('The free service returned no image.')
+
+    fakeSpaces({ [BIREFNET]: runsLimit })
+    const used = await onlineCutout(garment, {}).catch((e: unknown) => e)
+    expect((used as InstanceType<typeof SpaceError>).quota).toBe(true)
+    expect((used as Error).message).toMatch(/^Today's free tries on Hugging Face are used up\./)
+  })
+
+  it('does not upload the photo when the online remover takes other inputs now', async () => {
+    const { onlineCutout } = await import('./hf')
+    const { uploaded } = fakeSpaces({}, { ...CONFIGS, [BIREFNET]: { dependencies: [other, other, dep('image', 2)] } })
+    await expect(onlineCutout(garment, {})).rejects.toThrow('The online remover has changed, and this app can no longer use it.')
+    expect(uploaded).toEqual([])
   })
 })

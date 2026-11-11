@@ -948,7 +948,8 @@ input[type='range'] {
 }
 
 .toast-error {
-  background: var(--danger);
+  /* A deep red in both themes: the dark theme's light --danger is for text, and white on it is unreadable. */
+  background: #b3261e;
   color: #fff;
 }
 
@@ -1509,4 +1510,240 @@ input[type='range'] {
 
 .db-notice-box p {
   margin: 0 0 16px;
+}
+
+/* Post kit and catalogue */
+.kit-open {
+  width: 100%;
+  margin: -4px 0 16px;
+}
+
+.kit-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+}
+
+.kit-thumb {
+  position: relative;
+  flex: none;
+  width: 76px;
+  aspect-ratio: 4 / 5;
+  padding: 4px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow: hidden;
+  opacity: 0.55;
+}
+
+.kit-strip.small .kit-thumb {
+  width: 56px;
+}
+
+.kit-thumb.on {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.kit-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.kit-order {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 22px;
+  text-align: center;
+}
+
+.kit-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.kit-group .btn {
+  align-self: flex-start;
+}
+
+.kit-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.kit-group-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.kit-previews {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.kit-preview {
+  flex: none;
+  width: 120px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.kit-previews.tall .kit-preview {
+  width: 108px;
+}
+
+.catalogue-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.catalogue-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.catalogue-row {
+  display: grid;
+  grid-template-columns: auto 44px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 56px;
+  padding: 6px 10px;
+}
+
+.catalogue-row input {
+  grid-row: span 2;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.catalogue-thumb {
+  grid-row: span 2;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.catalogue-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.catalogue-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- photo clean-up ---------- */
+
+.quick-fixes {
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.photo-notes {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.photo-notes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.dropzone .tips {
+  max-width: 34ch;
+  font-size: 13px;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 14px 12px;
+  margin-top: 12px;
+}
+
+.compare-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.compare-tile.big {
+  grid-column: 1 / -1;
+}
+
+.compare-picture,
+.compare-empty {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  border-radius: 12px;
+}
+
+.compare-picture {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.compare-tile.big .compare-picture {
+  cursor: zoom-out;
+}
+
+.compare-picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.compare-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  text-align: center;
+  border: 1.5px dashed color-mix(in srgb, var(--text) 25%, transparent);
 }

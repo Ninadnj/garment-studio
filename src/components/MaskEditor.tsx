@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { loadBitmap } from '../lib/image'
+import { loadBitmap, releaseCanvas } from '../lib/image'
 import { composeCutout } from '../lib/matte'
 import { IconFit, IconRedo, IconUndo, IconZoomIn, IconZoomOut } from './Icons'
 import { Chips, Spinner } from './ui'
@@ -46,7 +46,7 @@ export function MaskEditor({
 }: {
   src: Blob // the photo the cutout was made from (same pixel size)
   cut: Blob // current cutout
-  auto: Blob // automatic result, for Reset
+  auto?: Blob // automatic result, for Reset; not there yet on a device that got only the edited cutout
   onDone: (cut: Blob) => void
   onCancel: () => void
   active: boolean // the Studio is on screen
@@ -72,6 +72,13 @@ export function MaskEditor({
   const [zoom, setZoom] = useState(1) // relative to fit
   const [ready, setReady] = useState(false)
   const [saving, setSaving] = useState(false)
+  const mounted = useRef(true)
+  useEffect(
+    () => () => {
+      mounted.current = false
+    },
+    [],
+  )
   const toolRef = useRef(tool)
   toolRef.current = tool
   const brushRef = useRef(brush)
@@ -209,7 +216,12 @@ export function MaskEditor({
       ro.disconnect()
       cancelAnimationFrame(frame.current)
       clearTimeout(hoverTimer.current)
-      doc.current?.src.close()
+      const d = doc.current
+      if (d) {
+        // Full-size canvases: given back at once rather than when collected (iPhones cap canvas memory).
+        d.src.close()
+        for (const c of [d.mask, d.tmp, ...d.undo, ...d.redo]) releaseCanvas(c)
+      }
       doc.current = null
     }
     // The editor is remounted for a new photo; props don't change while it is open.
@@ -265,7 +277,8 @@ export function MaskEditor({
   function pushUndo() {
     const d = doc.current!
     d.undo.push(snapshot())
-    if (d.undo.length > MAX_HISTORY) d.undo.shift()
+    if (d.undo.length > MAX_HISTORY) releaseCanvas(d.undo.shift()!)
+    d.redo.forEach(releaseCanvas)
     d.redo = []
     syncHistory()
   }
@@ -284,7 +297,9 @@ export function MaskEditor({
     const prev = d?.undo.pop()
     if (!d || !prev) return
     d.redo.push(snapshot())
+    if (d.redo.length > MAX_HISTORY) releaseCanvas(d.redo.shift()!)
     replaceMask(prev)
+    releaseCanvas(prev)
     syncHistory()
   }
 
@@ -293,12 +308,14 @@ export function MaskEditor({
     const next = d?.redo.pop()
     if (!d || !next) return
     d.undo.push(snapshot())
+    if (d.undo.length > MAX_HISTORY) releaseCanvas(d.undo.shift()!)
     replaceMask(next)
+    releaseCanvas(next)
     syncHistory()
   }
 
   async function reset() {
-    if (!doc.current) return
+    if (!doc.current || !auto) return
     pushUndo()
     const a = await loadBitmap(auto)
     replaceMask(a)
@@ -310,10 +327,12 @@ export function MaskEditor({
     if (!d || saving) return
     setSaving(true)
     try {
-      onDone(await composeCutout(d.src, d.mask, false))
+      const edited = await composeCutout(d.src, d.mask, false)
+      // Closed meanwhile (another photo opened): nothing is saved, and a new editor isn't closed by this one.
+      if (mounted.current) onDone(edited)
     } catch (e) {
       console.error(e)
-      setSaving(false)
+      if (mounted.current) setSaving(false)
     }
   }
 
@@ -458,8 +477,11 @@ export function MaskEditor({
       else if (key === '+' || key === '=') zoomTo(view.current.k * 1.5, center())
       else if (key === '-') zoomTo(view.current.k / 1.5, center())
       else if (key === ' ') space.current = true
-      else if (key === 'escape') onCancel()
-      else if (key === 'enter') done()
+      else if (key === 'escape' || key === 'enter') {
+        if (saving) return // the edits are being applied: like the disabled buttons, the keys wait
+        if (key === 'escape') onCancel()
+        else done()
+      }
       else return
       e.preventDefault()
     }
@@ -541,7 +563,7 @@ export function MaskEditor({
             : 'Drag to paint. Pinch or ⌘-scroll to zoom; scroll or hold Space to move. E / R switch tools, [ ] change the brush.'}
         </p>
         <div className="editor-actions">
-          <button className="btn-secondary" onClick={reset} disabled={!ready || saving}>
+          <button className="btn-secondary" onClick={reset} disabled={!ready || saving || !auto}>
             Reset
           </button>
           <span className="spacer" />

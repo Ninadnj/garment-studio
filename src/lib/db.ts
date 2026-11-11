@@ -42,6 +42,8 @@ export interface ProductRec {
   reservedUntil?: string // YYYY-MM-DD
   soldAt?: number // set when it becomes sold
   postedOn?: string[] // where it is listed: Instagram, Facebook…
+  postedAt?: Record<string, number> // channel → when it was last shared there from the post kit
+  postText?: string // the seller's own words for posts, under the name in captions and copied details
   audience?: Audience
   sizeSystem?: SizeSystem // what numbers mean; letter sizes when unset
   sizes: SizeStock[]

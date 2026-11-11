@@ -6,10 +6,13 @@ Web app (installable on phones and Macs) for clothing photos:
 
 1. **Clean photos.** Add one or many garment photos at once. Each background is removed on the device and replaced with a colour you pick (or a transparent PNG).
    - Edge cleanup: soft edges are recoloured with the garment's own colour, so the old background doesn't show as a light or dark rim. Specks and haze away from the garment are removed.
-   - **Erase / restore** brush with zoom (pinch, ⌘-scroll, +/−), undo and redo, for what the remover gets wrong (a hand holding a label, a dropped sleeve).
+   - **The cutout is checked for you.** When the result is probably wrong (almost nothing kept, nothing removed, see-through areas, several separate pieces) a line under the photo says so and offers the three ways out: try another way, fix by hand, or "It is fine". A dark, blurry or small photo gets one line too, since the app cannot repair those.
+   - **Try another way** shows the same photo cut out by the other methods, side by side on your background; tap the cleaner one. Two run on the device; the third, BiRefNet, is online: it sends that one photo to a free Hugging Face service and answers in a few seconds (a few free tries a day).
+   - **Fix by hand**: a brush with zoom (pinch, ⌘-scroll, +/−), undo and redo, for what the remover gets wrong (a hand holding a label, a dropped sleeve).
+   - **Fix light**: one tap brightens a dim photo and removes a yellow or blue colour cast, both read from the photo's plain white or grey background. It stays moderate (at most 0.7 of a stop brighter and half the Warmth slider, since a grey or cream wall can't be told from a white one in poor light), changes nothing when there is no such background or the background is kept, and can be undone.
    - **Remove background** can be switched off for close-ups (labels, fabric) where there is no background to remove.
    - **Light and colour** per photo: brightness, contrast, saturation, warmth. They change the garment only, never the background.
-   - **Look**, shared by every photo: background colour, studio light, format (1:1, 4:5, 3:4, 9:16), margin, and a shadow (soft, close or floor).
+   - **Look**, shared by every photo: background colour, studio light, format (Square 1:1, Feed 4:5, 3:4, Story 9:16), margin, and a shadow (soft, close or floor).
    - Phone screenshots of a photo viewer are cropped to the photo first (status bar, buttons and page dots go).
    - Exports at 2048 px. **Save all** opens the share sheet with every photo on a phone ("Save Images" puts them in Photos); on a Mac it downloads one zip.
    - Every photo stays in the strip under the preview, on this device, until you delete it.
@@ -17,9 +20,16 @@ Web app (installable on phones and Macs) for clothing photos:
 3. **Products.** A catalogue for selling: each product has a name, price (in the shop currency from Settings), code, status (draft, for sale, reserved, sold), sizes with stock, colours, category, condition, brand, material, measurements and notes. Garment photos belong to a product (one is the cover), and try-on results made while a photo belongs to the product are listed with it.
    - In the Studio, “Make a product” turns the photo on screen into a product; “Add to a product” adds it to an existing one.
    - The Products tab searches name, code, brand, category, colour, size, material, condition, measurements, notes, where it is posted and who it is reserved for (all words must match), and filters by status (Available = for sale or reserved), size in stock and who it is for. Sold products count as nothing in stock.
-   - “Copy details” copies the facts for a post or a listing: name, price, sizes in stock, colour, brand, material, condition, measurements, code. Notes stay private.
+   - “Copy details” copies the facts for a post or a listing: name, your own *Words for posts*, price, sizes in stock, colour, brand, material, condition, measurements, code, then the shop's own lines from Settings. Notes stay private. Prices are written the Georgian way on every phone: `45 ₾`, `12 500 ₾`, `12,50 ₾`.
    - Products are kept on the device (IndexedDB, version 3) and can be shared with a team (see **Team** below).
-4. **Library.** Every try-on result is kept on the device.
+4. **Post kit** (on a product): images made from its photos with the shop's Look (background, light, margin, shadow), each set handed to the share sheet with the details copied as the caption (Instagram and Facebook drop shared text, so it is pasted into the post). On a computer they are downloaded instead.
+   - **Instagram post**, 1080 × 1350: photos in the order you tap them (cover first, then try-ons, then other photos; up to 10, the most an Android share sheet takes at once). The first can carry the price (sale price with the old one struck through and the discount), sizes in stock and code, kept inside the profile grid's 3:4 crop.
+   - **Instagram story**, 1080 × 1920: one photo (a try-on when there is one) with the same facts, kept out of the top bar and the reply bar.
+   - **Facebook and marketplaces**, 2048 × 2048, no text (marketplaces show the price in their own fields).
+   - Sharing the post or story from a phone ticks Instagram under *Posted on* (with Undo); the other places are ticked by hand in the kit.
+   - A try-on that still has the background it was made with can be cut out to the shop background from the kit.
+5. **Catalogue** (Products tab): the products shown, as far as they can be sold now (for sale, in stock in the chosen size, with a photo; the rest is listed as left out), on 1080 × 1920 pages of 4 or 6 with photo (garment or try-on), price, code, name and sizes (the chosen size highlighted), the shop name and title at the top and the contact line at the bottom (Settings → Shop). Shared as images (in groups of 10 pages on a phone) or as one PDF, which messengers send unchanged as a document.
+6. **Library.** Every try-on result is kept on the device.
 
 Mac shortcuts: ⌘V pastes photos, ← → switch photos, E opens the brush. In the brush: E / R switch tools, [ ] change the brush size, ⌘Z / ⇧⌘Z undo and redo, 0 fits the photo, Space-drag moves around, Enter applies.
 
@@ -28,11 +38,15 @@ Mac shortcuts: ⌘V pastes photos, ← → switch photos, E opens the brush. In 
 | Part | Runs where | Cost |
 |---|---|---|
 | Background removal (default) | In the browser: [BRIA RMBG-1.4](https://huggingface.co/briaai/RMBG-1.4) via onnxruntime-web (WebGPU, falls back to WASM). The 88 MB model downloads once into Cache Storage. About 0.5 s per photo on an M2 once cached; about 8 s on the WASM fallback. | Free |
-| Background removal (alternative) | [@imgly/background-removal](https://github.com/imgly/background-removal-js) (ISNet), selectable per photo. Loaded only when picked. | Free |
+| Background removal (second method) | [@imgly/background-removal](https://github.com/imgly/background-removal-js) (ISNet), under *Try another way*, or as the default in Settings. Loaded only when picked. | Free |
+| Background removal (online) | [BiRefNet](https://huggingface.co/spaces/ZhengPeng7/BiRefNet_demo) on its author's Hugging Face Space (shared GPU), only when asked for under *Try another way*: the photo is uploaded, the cutout comes back in 3–4 s and gets the same edge cleanup. It is saved like a hand fix, so teammates receive the cutout itself. | Free, a few tries a day |
+| Photo check, cutout check, Fix light | In the browser, on small copies of the photo and its cutout: `src/lib/photocheck.ts`, `cutcheck.ts`, `autofix.ts` (thresholds and what they were measured on are in the files). | Free |
 | Edge cleanup | In a Web Worker: blur-fusion foreground estimation ([Forte & Pitié 2021](https://github.com/Photoroom/fast-foreground-estimation)) recolours soft edge pixels; connected regions under 0.5 % of the garment are dropped. `src/lib/matte/`. | Free |
 | HEIC photos (iPhone/Mac) | Converted to JPEG in the browser when the browser can't read HEIC ([heic-to](https://github.com/hoppergee/heic-to)). | Free |
 | AI, free service (default) | Public Hugging Face Spaces, called from the browser over Gradio's queue API (`src/lib/hf.ts`). Tops and dresses with [Kolors Virtual Try-On](https://huggingface.co/spaces/Kwai-Kolors/Kolors-Virtual-Try-On), which passes the images on to Kuaishou's servers. Bottoms with [WeShop's try-on demo](https://huggingface.co/spaces/WeShopAI/WeShopAI-Virtual-Try-On), which passes the images on to WeShop's servers. New models with [HiDream-O1-Image](https://huggingface.co/spaces/HiDream-ai/HiDream-O1-Image), else [HiDream-I1-Dev](https://huggingface.co/spaces/HiDream-ai/HiDream-I1-Dev), which pass the prompt on to HiDream's servers. Backups on the shared GPUs, when one of those is busy: tops with [IDM-VTON](https://huggingface.co/spaces/yisol/IDM-VTON), bottoms and dresses with [Leffa](https://huggingface.co/spaces/franciszzj/Leffa), new models with [FLUX.1 dev](https://huggingface.co/spaces/black-forest-labs/FLUX.1-dev). About 15–50 s per image; try-on results about 768 × 1024 (WeShop 1520 × 2048), kept as JPEG; models stored at up to 2048 px. | Free: Kolors, WeShop and HiDream without a daily limit, the shared GPUs about 3 images a day |
 | AI, FASHN | [FASHN](https://docs.fashn.ai) `model-create` and `tryon-max` (keeps the model's pose and framing), up to 4k. | FASHN credits |
+
+**Background removers compared** (2026-11-10, 12 photos: 8 product shots on white, 4 of people; M2 Mac, Chrome). BRIA RMBG-1.4 cut out all 12 correctly, in under 1 s each on WebGPU. IMG.LY's ISNet got 9 right: it kept only the button band of a grey cardigan, only the print of a cream top, and left a patterned skirt half transparent. Open RMBG (Apache-2.0) got 11 right, left the cream top half transparent, and runs on WASM only: 9 s a photo. BiRefNet lite (MIT) does not run with onnxruntime-web 1.21. BiRefNet online cut out the two hardest photos (cream top, grey cardigan) cleanly. So BRIA stays the default, IMG.LY the second method on the device, and BiRefNet the online one; no remover that is free for commercial use matched BRIA on the device.
 
 **Kolors** (tested 2026-10-30) runs on Kuaishou's servers, not on the shared GPUs, so the limits below don't apply to it. When many people use it, it answers "Too many users, please try again later", and the app sends the try-on to IDM-VTON or Leffa instead (the progress line names the service). It doesn't do bottoms: a test pair of jeans came back as a dress. In tests, small print on garments came out garbled, and a long top sometimes changed what the model wears below. The garment type (top, bottom, dress) is kept with each photo, because it decides which service gets it.
 
@@ -60,7 +74,7 @@ Products, the photos in them and their try-on results can be shared with a small
 
 **Setup, once (about 10 minutes):**
 1. Create a free account at supabase.com and a new project (a region near you, e.g. Frankfurt). Keep the database password it shows somewhere safe; the app doesn't need it.
-2. **SQL Editor** → New query → paste all of `supabase/setup.sql` → Run. It creates the shared table and the private `photos` bucket, and lets only signed-in team members read or write them (including the explicit table grant Supabase requires for new tables since October 2026). Running it again is harmless.
+2. **SQL Editor** → New query → paste all of `supabase/setup.sql` → Run. It creates the shared table and the private `photos` bucket, and lets only signed-in team members read or write them (including the explicit table grant Supabase requires for new tables since October 2026). Running it again is harmless; a project set up before 9 November 2026 should run it once more (it then also stops a phone whose clock runs ahead from blocking the team's later edits).
 3. **Authentication → Sign In / Providers**: turn off *Allow new users to sign up*, so only people you add can sign in. While it is on, anyone who learns the project address could create an account and see the catalogue; the Team section in Settings says so.
 4. **Authentication → Users → Add user → Create new user**, for each team member: email and password, with *Auto Confirm User* ticked. No email is sent.
 5. **Project Settings → API Keys**: copy the project URL and the *publishable* (anon) key. Never put the secret (service_role) key in the app.
@@ -83,7 +97,7 @@ npm run dev
 npm test
 ```
 
-`test-fixtures/` holds synthetic test images (a T-shirt photo in JPEG and HEIC, a stand-in model photo). Unit tests cover the edge cleanup, light and colour, the zip writer, settings migration, products (codes, stock, prices as typed, search, size order, copied details), team sync (two devices against a stand-in for Supabase: sharing, newer-wins, deletions, photos uploaded once), the Supabase client (sign-in, session renewal, paging, request formats), and the Hugging Face client: message parsing, which service each free try-on and new model goes to, the backups and their messages, and that only the shared-GPU Spaces get the token (against a stand-in for the Spaces, so no requests go out).
+`test-fixtures/` holds synthetic test images (a T-shirt photo in JPEG and HEIC, a stand-in model photo). Unit tests cover the edge cleanup, light and colour, the zip writer, settings migration, products (codes, stock, prices as typed, search, size order, copied details), team sync (two devices against a stand-in for Supabase: sharing, newer-wins, deletions, photos uploaded once), the Supabase client (sign-in, session renewal, paging, request formats, setup links pasted with other text, secret keys refused), the post kit and catalogue (photo order, facts on images, prices, text fitting with Georgian names, safe areas, page layout, what a catalogue leaves out, the PDF's structure), and the Hugging Face client: message parsing, which service each free try-on and new model goes to, the backups and their messages, and that only the shared-GPU Spaces get the token (against a stand-in for the Spaces, so no requests go out).
 
 ## Deploy
 
@@ -104,6 +118,7 @@ An app added to the iPhone Home Screen, or to the Dock from Safari, keeps its ow
 This is a personal, non-commercial app. Every component below allows that, except WeShop's demo, which states no terms:
 
 - BRIA RMBG-1.4 weights: free for non-commercial use only (commercial use needs an agreement with BRIA).
+- BiRefNet (the online remover): MIT.
 - `@imgly/background-removal`: AGPL-3.0 (keep the source public if the app is served to others).
 - `heic-to`: LGPL-3.0.
 - Free AI service: IDM-VTON (CC BY-NC-SA 4.0) and FLUX.1 dev (FLUX.1 [dev] Non-Commercial License) are non-commercial; Leffa is MIT. Kolors Virtual Try-On is a hosted demo (the Space's code is Apache-2.0; the try-on runs on Kuaishou's servers). The HiDream demos are hosted too (their Spaces' code is MIT; the images are made on HiDream's servers), and so is WeShop's (the try-on runs on WeShop's servers; its Space gives its licence only as "other", with no terms).

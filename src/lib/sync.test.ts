@@ -61,7 +61,7 @@ function device(server: ReturnType<typeof fakeServer>) {
     put: async (store, rec) => void stores[store].set(rec.id, rec),
     remove: async (store, id) => void stores[store].delete(id),
     all: async (store) => [...stores[store].values()],
-    thumb: async () => new Blob(['thumb']),
+    thumb: async (shown: Blob) => new Blob([`thumb of ${await shown.text()}`]),
     changed: () => {},
   }
   let signedIn = true
@@ -308,6 +308,55 @@ describe('team sync', () => {
     await b.sync.run()
     expect(b.stores.garments.size).toBe(1)
     expect(b.sync.status().error).toBeUndefined()
+  })
+
+  it('makes the cutout again when the team chose another method, and keeps it otherwise', async () => {
+    const server = fakeServer()
+    const a = device(server)
+    const b = device(server)
+    a.write('products', product())
+    a.write('garments', garment())
+    await a.sync.run()
+    await b.sync.run()
+    const own = new Blob(['cut on b'], { type: 'image/png' })
+    b.stores.garments.set('g1', { ...(b.stores.garments.get('g1') as GarmentRec), autoCut: own })
+
+    a.write('garments', garment({ kind: 'dress', updatedAt: 5 }))
+    await a.sync.run()
+    await b.sync.run()
+    expect(b.stores.garments.get('g1')).toMatchObject({ kind: 'dress', autoCut: own })
+
+    a.write('garments', garment({ kind: 'dress', remover: 'isnet_fp16', updatedAt: 6 }))
+    await a.sync.run()
+    await b.sync.run()
+    const g = b.stores.garments.get('g1') as GarmentRec
+    expect(g.remover).toBe('isnet_fp16')
+    expect(g.autoCut).toBeUndefined()
+  })
+
+  it('makes a new thumbnail when a hand fix or an online cutout arrives for a photo it has', async () => {
+    const server = fakeServer()
+    const a = device(server)
+    const b = device(server)
+    a.write('products', product())
+    a.write('garments', garment())
+    await a.sync.run()
+    await b.sync.run()
+    expect(await (b.stores.garments.get('g1') as GarmentRec).thumb!.text()).toBe('thumb of front')
+
+    a.write('garments', garment({ editedCut: new Blob(['fixed'], { type: 'image/png' }), updatedAt: 5 }))
+    await a.sync.run()
+    await b.sync.run()
+    const g = b.stores.garments.get('g1') as GarmentRec
+    expect(await g.editedCut!.text()).toBe('fixed')
+    expect(await g.thumb!.text()).toBe('thumb of fixed')
+
+    // Nothing shown changed: the thumbnail stays.
+    const thumb = g.thumb
+    a.write('garments', garment({ editedCut: (a.stores.garments.get('g1') as GarmentRec).editedCut, kind: 'top', updatedAt: 7 }))
+    await a.sync.run()
+    await b.sync.run()
+    expect((b.stores.garments.get('g1') as GarmentRec).thumb).toBe(thumb)
   })
 
   it('treats cutouts and thumbnails as this device’s own, not as edits for the team', () => {

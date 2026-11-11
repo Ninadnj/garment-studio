@@ -23,7 +23,18 @@ revoke all on table public.records from anon;
 -- Server time on every write, who wrote it, and never an older change over a newer one.
 create or replace function public.records_before_write() returns trigger
 language plpgsql security invoker set search_path = '' as $$
+declare
+  latest bigint := (extract(epoch from clock_timestamp()) * 1000)::bigint + 60000;
 begin
+  -- A phone whose clock runs ahead would otherwise win every later edit to this record: no change counts as
+  -- later than a minute past the server's time. The record's own updatedAt is set to match, so the other
+  -- devices keep the corrected time too (and never re-send a copy that looks newer than it is).
+  if new.changed_at > latest then
+    new.changed_at := latest;
+    if new.data ? 'updatedAt' then
+      new.data := jsonb_set(new.data, '{updatedAt}', to_jsonb(latest));
+    end if;
+  end if;
   if tg_op = 'UPDATE' and new.changed_at < old.changed_at then
     return null; -- keep the newer row
   end if;

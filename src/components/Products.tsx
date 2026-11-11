@@ -37,11 +37,13 @@ export function ProductsView({
   garments,
   currency,
   open,
+  onCatalogue,
 }: {
   P: Products
   garments: GarmentRec[]
   currency: Currency
   open: (id: string) => void
+  onCatalogue: (ids: string[], size?: string) => void
 }) {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<Filter>('available')
@@ -73,6 +75,16 @@ export function ProductsView({
     <div className="page">
       <div className="page-head">
         <h1>Products</h1>
+        <span className="spacer" />
+        {P.products.length > 0 && (
+          <button
+            className="btn-secondary"
+            onClick={() => onCatalogue(shown.map((p) => p.id), sizes.includes(size!) ? size : undefined)}
+            disabled={!shown.length}
+          >
+            Catalogue
+          </button>
+        )}
         <button className="btn" onClick={() => open(P.create().id)} disabled={!P.loaded}>
           <IconPlus /> New product
         </button>

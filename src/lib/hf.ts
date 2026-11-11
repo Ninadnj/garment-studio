@@ -203,6 +203,7 @@ type CallOptions = {
   onStatus?: (s: SpaceStatus) => void
   signal?: AbortSignal
   timeout?: number // ms; some services keep a job open as long as their backend takes (WeShop: up to an hour)
+  pick?: number // which image to take when one output holds several (an image slider: before and after)
 }
 
 /**
@@ -218,6 +219,7 @@ export async function callSpace(
   opts: CallOptions = {},
 ): Promise<Blob> {
   if (!opts.timeout) return runSpace(host, api, files, buildData, opts)
+  opts.signal?.throwIfAborted() // an aborted signal fires no event to listen for
   const ctrl = new AbortController()
   const stop = () => ctrl.abort()
   opts.signal?.addEventListener('abort', stop)
@@ -312,16 +314,18 @@ async function runSpace(
       else if (m.msg === 'process_completed') {
         reader.cancel().catch(() => {})
         if (!m.success) throw fail(m.output?.error)
-        const outputs = (m.output?.data ?? []).filter(isFile)
+        const all = m.output?.data ?? []
+        const outputs = (opts.pick === undefined ? all : all.flat()).filter(isFile)
         // Some Spaces report a failure as text next to an empty image (Kolors: "Too many users, …"),
         // HiDream as an HTML status pill.
         const text = m.output?.data
           ?.find((d): d is string => typeof d === 'string' && d !== '')
           ?.replace(/<[^>]*>/g, '')
           .trim()
-        if (!outputs.length) throw fail(text || warning || 'The free service returned no image.')
-        // Only the first image is used (others are masks and the like). The token goes only to the Space itself.
-        const url = outputs[0].url ?? `${base}/file=${outputs[0].path}`
+        const file = outputs[opts.pick ?? 0]
+        if (!file) throw fail(text || warning || 'The free service returned no image.')
+        // Only one image is used (others are masks and the like). The token goes only to the Space itself.
+        const url = file.url ?? `${base}/file=${file.path}`
         const own = new URL(url).origin === `https://${host}`
         return (await request(url, { headers: own ? auth : {}, signal: opts.signal })).blob()
       }
@@ -342,20 +346,24 @@ const HIDREAM_I1 = 'hidream-ai-hidream-i1-dev.hf.space' // new models, 880 × 11
 const IDM_VTON = 'yisol-idm-vton.hf.space' // tops when Kolors is busy (clean result, tested 2026-10-30)
 const LEFFA = 'franciszzj-leffa.hf.space' // bottoms and dresses when WeShop or Kolors is busy (Dress Code model)
 const FLUX_DEV = 'black-forest-labs-flux-1-dev.hf.space' // new models when HiDream is busy
+// Background remover (BiRefNet, MIT licence) by its author, on a shared GPU; 3–4 s a photo (tested 2026-11-10).
+const BIREFNET = 'zhengpeng7-birefnet-demo.hf.space'
 
 // Kolors and HiDream end their own jobs within about 5 minutes; WeShop can keep one open for an hour.
 const OWN_SERVERS_TIMEOUT = 5 * 60_000
+// A shared-GPU queue can be long, but not endless: a job stuck there fails instead of spinning forever.
+const SHARED_GPU_TIMEOUT = 10 * 60_000
 
 const seed = () => Math.floor(Math.random() * 1_000_000)
 
 type CallOpts = Parameters<typeof callSpace>[4]
 
 // Status updates name the service, since a job can move from one to another. Only the shared-GPU Spaces
-// get the Hugging Face token; the others don't use it, and get a time limit instead.
+// get the Hugging Face token; the others don't use it. Each gets a time limit.
 const via = (service: string, opts: CallOpts, sharedGpu: boolean): CallOpts => ({
   ...opts,
   token: sharedGpu ? opts?.token : undefined,
-  timeout: sharedGpu ? undefined : OWN_SERVERS_TIMEOUT,
+  timeout: sharedGpu ? SHARED_GPU_TIMEOUT : OWN_SERVERS_TIMEOUT,
   onStatus: (s) => opts?.onStatus?.({ ...s, service }),
 })
 
@@ -476,4 +484,24 @@ export async function freeModel(prompt: string, opts: CallOpts) {
   const flux = () =>
     callSpace(FLUX_DEV, 'infer', [], () => [prompt, 0, true, 768, 1024, 3.5, 28], via('FLUX.1 dev', opts, true))
   return withBackup(['HiDream', hidream], ['FLUX.1 dev', flux], opts?.signal)
+}
+
+/**
+ * `photo` cut out by BiRefNet on Hugging Face: a PNG of the same size whose alpha is the matte. Its second
+ * output image is the cutout (the first is the photo, for the Space's before/after slider).
+ */
+export async function onlineCutout(photo: Blob, opts: CallOpts): Promise<Blob> {
+  try {
+    return await callSpace(BIREFNET, 'image', [photo], ([p]) => [p, '1024x1024', 'General'], {
+      ...via('BiRefNet', opts, true),
+      timeout: 3 * 60_000,
+      pick: 1,
+    })
+  } catch (e) {
+    // The shared messages point to FASHN, which makes try-ons, not cutouts.
+    if (e instanceof SpaceError && e.changed) throw new SpaceError('The online remover has changed, and this app can no longer use it.', false, undefined, true)
+    if (e instanceof SpaceError && !e.quota && /FASHN/.test(e.message))
+      throw new SpaceError('The online remover could not cut out this photo. Try again.')
+    throw e
+  }
 }

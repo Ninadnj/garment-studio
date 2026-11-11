@@ -27,12 +27,16 @@ interface Attempt {
   modelId: string
   productId?: string
   note: string
-  run: (update: (patch: Partial<Job>) => void) => Promise<Blob>
+  run: (update: (patch: Partial<Job>) => void, signal?: AbortSignal) => Promise<Blob>
 }
 
 interface Job {
   id: string
   started: number
+  free: boolean // free jobs can be cancelled; a paid FASHN job runs to the end anyway
+  bmp?: ImageBitmap // the garment on screen when it started
+  modelId?: string
+  retired?: boolean // can't be tried again as it was (say why in `error`)
   status: RunStatus | 'preparing'
   position?: number // place in the free queue
   service?: string // free service working on it
@@ -77,6 +81,7 @@ export function TryOnPanel(p: {
   goSettings: () => void
 }) {
   const [jobs, setJobs] = useState<Job[]>([])
+  const controllers = useRef(new Map<string, AbortController>())
   const [note, setNote] = useState('')
   const kind = p.garment?.kind ?? 'top'
   const modelInput = useRef<HTMLInputElement>(null)
@@ -100,9 +105,10 @@ export function TryOnPanel(p: {
         modelId: model.id,
         productId: g.productId,
         note: text,
-        run: async (update) => {
+        run: async (update, signal) => {
           const out = await freeTryOn(product, person, g.kind, text, {
             token: settings.current.hfToken || undefined,
+            signal,
             onStatus: (s) =>
               update(
                 s.stage === 'queue'
@@ -135,13 +141,24 @@ export function TryOnPanel(p: {
   /** Puts the garment on the model, or repeats an earlier attempt. */
   async function dress(again?: Attempt) {
     if (!again && (!p.garment || !model)) return
-    const job: Job = { id: uid(), started: Date.now(), status: 'preparing' }
+    const ctrl = new AbortController()
+    const job: Job = {
+      id: uid(),
+      started: Date.now(),
+      status: 'preparing',
+      free: again?.free ?? free,
+      bmp: p.garment?.bmp,
+      modelId: again?.modelId ?? model?.id,
+    }
+    controllers.current.set(job.id, ctrl)
     const update = (patch: Partial<Job>) => setJobs((js) => js.map((j) => (j.id === job.id ? { ...j, ...patch } : j)))
     setJobs((js) => [job, ...js])
     try {
       const attempt = again ?? (await prepare(p.garment!, model!))
+      if (ctrl.signal.aborted) return
       update({ status: 'starting', attempt })
-      const image = await attempt.run(update)
+      const image = await attempt.run(update, ctrl.signal)
+      if (ctrl.signal.aborted) return // cancelled during the last step (the image is re-encoded without the signal)
       const rec: LookRec = {
         id: uid(),
         image,
@@ -154,9 +171,35 @@ export function TryOnPanel(p: {
       update({ status: 'completed', lookId: rec.id })
       p.makeCutout(rec)
     } catch (e) {
+      if (ctrl.signal.aborted) return // cancelled: its card is already gone
       update({ status: 'failed', error: (e as Error).message, quota: e instanceof SpaceError && e.quota })
+    } finally {
+      controllers.current.delete(job.id)
     }
   }
+
+  function cancel(j: Job) {
+    controllers.current.get(j.id)?.abort()
+    setJobs((js) => js.filter((x) => x.id !== j.id))
+  }
+
+  function retry(j: Job) {
+    // The images are prepared again only from what is on screen, so that must still be the same garment and model.
+    const why =
+      j.attempt && j.attempt.free !== free
+        ? 'You switched between the free service and FASHN since this ran. Start again with “Put it on the model”.'
+        : !j.attempt && (p.garment?.bmp !== j.bmp || model?.id !== j.modelId)
+          ? 'Another garment or model is on screen now. Start again with “Put it on the model”.'
+          : undefined
+    if (why) return setJobs((js) => js.map((x) => (x.id === j.id ? { ...x, error: why, retired: true } : x)))
+    setJobs((js) => js.filter((x) => x.id !== j.id))
+    dress(j.attempt)
+  }
+
+  // A second tap while the first is still being prepared would start a second run of the same pair.
+  const starting = jobs.some(
+    (j) => (j.status === 'preparing' || j.status === 'starting') && j.bmp === p.garment?.bmp && j.modelId === model?.id,
+  )
 
   const ready = free || !!p.settings.fashnKey
 
@@ -225,7 +268,7 @@ export function TryOnPanel(p: {
           />
         )}
         {ready ? (
-          <button className="btn wide" onClick={() => dress()} disabled={!p.garment || !model}>
+          <button className="btn wide" onClick={() => dress()} disabled={!p.garment || !model || starting}>
             {!p.garment ? 'Add a garment first' : !model ? 'Choose a model' : 'Put it on the model'}
           </button>
         ) : (
@@ -257,11 +300,8 @@ export function TryOnPanel(p: {
                 job={j}
                 hasToken={!!p.settings.hfToken}
                 onDismiss={() => setJobs((js) => js.filter((x) => x.id !== j.id))}
-                onRetry={() => {
-                  setJobs((js) => js.filter((x) => x.id !== j.id))
-                  // After a switch between the free service and FASHN the images are prepared again.
-                  dress(j.attempt?.free === free ? j.attempt : undefined)
-                }}
+                onRetry={() => retry(j)}
+                onCancel={j.free ? () => cancel(j) : undefined}
                 onSettings={p.goSettings}
               />
             )
@@ -277,12 +317,14 @@ function JobCard({
   hasToken,
   onDismiss,
   onRetry,
+  onCancel,
   onSettings,
 }: {
   job: Job
   hasToken: boolean
   onDismiss: () => void
   onRetry: () => void
+  onCancel?: () => void
   onSettings: () => void
 }) {
   const failed = job.status === 'failed'
@@ -297,9 +339,11 @@ function JobCard({
               {hasToken ? 'Settings' : 'Add a token'}
             </button>
           ) : (
-            <button className="btn-small" onClick={onRetry}>
-              Try again
-            </button>
+            !job.retired && (
+              <button className="btn-small" onClick={onRetry}>
+                Try again
+              </button>
+            )
           )}
           <button className="btn-text" onClick={onDismiss}>
             Dismiss
@@ -315,6 +359,11 @@ function JobCard({
         {job.service ? ` · ${job.service}` : ''}
         {job.status === 'in_queue' && job.position ? ` · position ${job.position}` : ''} · {secs}s
       </span>
+      {onCancel && (
+        <button className="btn-text" onClick={onCancel}>
+          Cancel
+        </button>
+      )}
     </div>
   )
 }

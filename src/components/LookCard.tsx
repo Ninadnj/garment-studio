@@ -23,18 +23,26 @@ export function LookCard({
   const cut = useBitmap(look.cutout)
   const [original, setOriginal] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [pending, setPending] = useState<Blob>() // made, waiting for a tap to share
+  const [problem, setProblem] = useState<string>()
   const canvas = useRef<HTMLCanvasElement>(null)
+  // An image waiting for a tap was made for the colour and view of that moment.
+  useEffect(() => setPending(undefined), [bg, original, look.cutout])
   const showColour = !!cut && !original
 
   useEffect(() => {
     if (showColour && canvas.current) drawReplace(canvas.current, cut, bg, 1400)
   }, [showColour, cut, bg])
 
-  async function save() {
+  async function save(ready?: Blob) {
     setSaving(true)
+    setProblem(undefined)
     try {
-      const blob = showColour ? await exportReplace(cut, bg) : look.image
-      await saveImage(blob, `look-${look.id.slice(0, 8)}`)
+      const blob = ready ?? (showColour ? await exportReplace(cut, bg) : look.image)
+      // iPhones refuse a share sheet that opens long after the tap: the image is ready now, so one more tap shares it.
+      setPending((await saveImage(blob, `look-${look.id.slice(0, 8)}`)) === 'needs-tap' ? blob : undefined)
+    } catch (e) {
+      setProblem(`Could not save: ${(e as Error).message}`)
     } finally {
       setSaving(false)
     }
@@ -69,10 +77,15 @@ export function LookCard({
             Delete
           </button>
         )}
-        <button className="btn-small" onClick={save} disabled={saving}>
-          Save
+        <button className="btn-small" onClick={() => save(pending)} disabled={saving}>
+          {pending ? 'Tap to share' : 'Save'}
         </button>
       </figcaption>
+      {problem && (
+        <p className="error small" role="alert">
+          {problem}
+        </p>
+      )}
     </figure>
   )
 }
